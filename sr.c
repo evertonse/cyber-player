@@ -37,17 +37,8 @@
 #include <dirent.h>
 #include "raylib.h"
 //#include "rcore.h"
+#include "header.h"
 
-typedef struct {
-    double *items;
-    size_t count;
-    size_t capacity;
-} SeenPositionPercentages;
-
-typedef struct {
-    double start;
-    double end;
-} Segment;
 
 
 void* glfwGetProcAddress(const char* procname);
@@ -93,6 +84,7 @@ void merge_segments() {
 
 
 
+
 // #define NOB_IMPLEMENTATION
 // #include "nob.h"
 static RenderTexture2D progress_bar_render_texture;
@@ -113,7 +105,37 @@ static double* percent_positions = NULL;
 static const char* currently_playing_path = NULL;
 static double percent_position;
 
+static FileProgress* file_progress_list = NULL;
+
+void collect_file_progress_info(void) {
+    // Add final segment
+    if (segment_start >= 0 && last_position >= 0) {
+        add_watched_segment(segment_start, last_position);
+    }
+    FileProgress temp = {
+        .segments = watched_segments,
+        .segment_count = arrlen(watched_segments)
+    };
+    TextCopy(temp.filename, currently_playing_path);
+    arrput(file_progress_list, temp);
+}
+
+void reset_segments_info(void) {
+
+    // FIX:  This does not work
+    watched_segments = NULL;
+    segment_count = 0;
+    duration = 0;
+    last_position = -1;
+    segment_start = -1;
+}
+
 void player_load_file(void* ctx, const char* file_path)  {
+
+    if (currently_playing_path != NULL) {
+        collect_file_progress_info();
+    }
+
     const char *cmd[] = {"loadfile", file_path, NULL};
     currently_playing_path = file_path;
     mpv_command_async(ctx, 0, cmd);
@@ -124,16 +146,14 @@ void player_load_file(void* ctx, const char* file_path)  {
     }
     EndTextureMode();
 
-    arrsetlen(watched_segments, 0);
-    segment_count = 0;
-    duration = 0;
-    last_position = -1;
-    segment_start = -1;
+    reset_segments_info();
+    
+
 }
 
 int wait_for_property(mpv_handle *ctx, const char *name) {
     mpv_observe_property(ctx, 0, name, MPV_FORMAT_NONE);
-    
+
     while (1) {
         mpv_event *event = mpv_wait_event(ctx, 10);
         if (event->event_id == MPV_EVENT_NONE) {
@@ -336,7 +356,7 @@ static void handle_mpv_events(mpv_handle *mpv) {
          * Note: future enhancements might add new event structs for existing or new
          *       event types.
          */
-    
+
 
         if (mp_event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             printf("uint64_t reply_userdata = %d;\n", mp_event->reply_userdata);
@@ -475,14 +495,24 @@ int main(int argc, char *argv[]) {
     mp4files = LoadDirectoryFilesEx("/home/excyber/media/videos/", ".mp4", true);
 #endif
     mp4files.count =  mp4files.count < FILES_LISTING_LIMIT ? mp4files.count: FILES_LISTING_LIMIT;
-    
+
     printf("mp4files.count: %d\n", mp4files.count);
     for (int i = 0; i < mp4files.count ; ++i) {
         printf("%s\n", mp4files.paths[i]);
     }
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
 
-    Font jetbrains = LoadFontEx("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", 128, NULL, 0);
+#define FONT_SIZE (64)
+
+    Font jetbrains = LoadFontEx("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
+    GenTextureMipmaps(&jetbrains.texture);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
+
+    // FILTER_TRILINEAR requires generated mipmaps
+    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
+    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
+
+
 
 
     mpv_texture = LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -492,7 +522,7 @@ int main(int argc, char *argv[]) {
         | FLAG_WINDOW_HIGHDPI
 
         // support mouse passthrough, only supported when FLAG_WINDOW_UNDECORATED
-        // | FLAG_WINDOW_UNDECORATED 
+        // | FLAG_WINDOW_UNDECORATED
         // | FLAG_WINDOW_MOUSE_PASSTHROUGH
         | FLAG_VSYNC_HINT
 
@@ -501,10 +531,12 @@ int main(int argc, char *argv[]) {
         // run program in borderless windowed mode
         // | FLAG_BORDERLESS_WINDOWED_MODE
     );
+
     SetConfigFlags(
         FLAG_MSAA_4X_HINT
         | FLAG_INTERLACED_HINT
     );
+
     progress_bar_render_texture = LoadRenderTexture(PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT);
 
     TraceLog(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(), GetScreenHeight());
@@ -586,14 +618,14 @@ int main(int argc, char *argv[]) {
         arrsetlen(percent_positions, 0);
         player_load_file(mpv, argv[1]);
     }
-    
+
     // Wait until the file is loaded
 
     mpv_wait_event(mpv, -1);
 
     // double pfps = mpv_get_property_double(mpv, "container-fps");
 
-    
+
     // int64_t total_frames = (int64_t)(duration * pfps);
 
     // printf("duration:%f fps:%f total_frames:%ld\r", duration, pfps, total_frames);
@@ -747,19 +779,32 @@ int main(int argc, char *argv[]) {
                            (Vector2){0, 0}, WHITE);
         #endif
 
-            
+
 
 
         if (draw_file_list) {
+
+            // Maybe considere SDF
+            // https://www.raylib.com/examples/text/loader.html?name=text_font_sdf
+
+            const int   spacing = 0;
+            // const Font  font = GetFontDefault();
+            const Font  font       = jetbrains;
+            const float font_size  = 19;
+            Color font_color = RED;
+
+
             for (int i = 0; i < mp4files.count ; ++i) {
-                const char* file_path = mp4files.paths[i];
-                const int   font_size = 20;
-                const int   spacing = 0;
-                // const Font  font = GetFontDefault();
-                const Font  font = jetbrains;
                 Vector2 text_pos = {0, i*font_size};
+                const char* file_path = mp4files.paths[i];
+
+                if (i >= (FILES_LISTING_LIMIT/2)) {
+                    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
+                    font_color = MAROON;
+                } else {
+                }
                 // RLAPI void DrawTextEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color tint); // Draw text using font and additional parameters
-                DrawTextEx(font, file_path, text_pos, font_size, spacing, RED);
+                DrawTextEx(font, file_path, text_pos, font_size, spacing, font_color);
                 Vector2 text_size = MeasureTextEx(font, file_path, font_size, spacing);
                 //TRACELOG(LOG_INFO, "Mouse position = %d,%d", (int)mouse_pos.x, (int)mouse_pos.y);
                 Rectangle text_rect = {text_pos.x, text_pos.y, text_size.x, text_size.y};
@@ -856,11 +901,20 @@ done:
     // Merge overlapping segments
     merge_segments();
 
-    // Print final watched segments
-    printf("Watched segments from duration %f:\n", duration);
-    for (int i = 0; i < segment_count; i++) {
-        printf("%.2f - %.2f\n", watched_segments[i].start, watched_segments[i].end);
+    collect_file_progress_info();
+    reset_segments_info();
+
+    for (int i = 0; i < arrlen(file_progress_list); i++) {
+
+        printf("File: %s\n", file_progress_list[i].filename);
+        printf("Segments:\n");
+        for (int j = 0; j < file_progress_list[i].segment_count; j++) {
+            printf("  %.2f - %.2f\n", file_progress_list[i].segments[j].start, file_progress_list[i].segments[j].end);
+        }
+        printf("\n");
     }
+
+    write_progress_data("progress.bin", file_progress_list, arrlen(file_progress_list));
     // Destroy the GL renderer and all of the GL objects it allocated. If video
     // is still running, the video track will be deselected.
 

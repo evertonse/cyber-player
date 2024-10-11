@@ -20,7 +20,7 @@ bool build_cyber_player(void) {
 
 
     nob_cmd_append(&cmd, "cc");
-    nob_cmd_append(&cmd, "sr.c");
+    nob_cmd_append(&cmd, "sr.c", "progress.c");
 
     nob_cmd_append(&cmd, nob_temp_sprintf("-o%s/%s", BIN_DIR, BIN));
 
@@ -44,7 +44,7 @@ bool build_cyber_player(void) {
 
     if (!nob_cmd_run_sync(cmd)) nob_return_defer(false);
 
-    nob_log(NOB_INFO, "%s OK", __PRETTY_FUNCTION__);
+    nob_log(NOB_INFO, "OK: %s", __PRETTY_FUNCTION__);
 
 defer:
     nob_cmd_free(cmd);
