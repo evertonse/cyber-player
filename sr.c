@@ -481,9 +481,30 @@ int main(int argc, char *argv[]) {
         printf("%s\n", mp4files.paths[i]);
     }
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
+
+    Font jetbrains = LoadFontEx("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", 128, NULL, 0);
+
+
     mpv_texture = LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT);
-    // Try enabling MSAA 4X and interlaced video format (for V3D) and other sutff
-    SetWindowState(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT);
+
+    SetWindowState(
+        FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN
+        | FLAG_WINDOW_HIGHDPI
+
+        // support mouse passthrough, only supported when FLAG_WINDOW_UNDECORATED
+        // | FLAG_WINDOW_UNDECORATED 
+        // | FLAG_WINDOW_MOUSE_PASSTHROUGH
+        | FLAG_VSYNC_HINT
+
+        | FLAG_MSAA_4X_HINT
+        | FLAG_INTERLACED_HINT
+        // run program in borderless windowed mode
+        // | FLAG_BORDERLESS_WINDOWED_MODE
+    );
+    SetConfigFlags(
+        FLAG_MSAA_4X_HINT
+        | FLAG_INTERLACED_HINT
+    );
     progress_bar_render_texture = LoadRenderTexture(PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT);
 
     TraceLog(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(), GetScreenHeight());
@@ -734,7 +755,8 @@ int main(int argc, char *argv[]) {
                 const char* file_path = mp4files.paths[i];
                 const int   font_size = 20;
                 const int   spacing = 0;
-                const Font  font = GetFontDefault();
+                // const Font  font = GetFontDefault();
+                const Font  font = jetbrains;
                 Vector2 text_pos = {0, i*font_size};
                 // RLAPI void DrawTextEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color tint); // Draw text using font and additional parameters
                 DrawTextEx(font, file_path, text_pos, font_size, spacing, RED);
