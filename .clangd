@@ -1,0 +1,17 @@
+CompileFlags:
+  Add:
+    - -D__MINGW64__
+    - -D__MINGW32__
+    # - -std=c11
+    - -DNOB_IMPLEMENTATION
+    - -I/usr/include/mpv
+    - -I/usr/local/include
+    - -Ivendor
+    - -I/usr/include/glib-2.0
+    - -I/usr/lib/glib-2.0/include
+    - -I/usr/include/sysprof-6
+    - -I/usr/include/SDL2
+    - -L/usr/lib -lmpv
+    - -L/usr/lib -lSDL2
+    - -L/usr/local/lib -l:libraylib.a
+

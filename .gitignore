@@ -1,0 +1,10 @@
+./nob
+nob
+nob.exe
+./nob.exe
+*.json
+*.old
+.last_yank.txt
+.trails
+.bin/
+.png
