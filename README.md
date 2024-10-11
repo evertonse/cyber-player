@@ -1,3 +1,10 @@
+# Start
+
+```bash
+    gcc nob.c -o nob && ./nob # Just compile once then you can just ./nob
+```
+
+# Random Odin package definition
 Package, filename, folder structure Odin advice
 A package is a directory of Odin code files (in the same folder), all of which have the same and unique package declaration package foo at the top of those files in that folder;
 The package is only linked to the directory name (folder) and nothing else;
