@@ -1,5 +1,7 @@
+#include <assert.h>
 
 #include "header.h"
+#include "stb_ds.h"
 
 // Function to escape special characters in the filename
 static void escape_filename(const char* input, char* output, size_t output_size) {
@@ -32,7 +34,7 @@ static void unescape_filename(const char* input, char* output, size_t output_siz
 
 
 // Function to write the data to a binary file
-void write_progress_data(const char* filename, FileProgress* progress_array, int array_size) {
+void store_progress_data(const char* filename, FileProgress* progress_array, int array_size) {
 
     FILE* file = fopen(filename, "wb");
     if (!file) {
@@ -62,8 +64,9 @@ void write_progress_data(const char* filename, FileProgress* progress_array, int
     fclose(file);
 }
 
+
 // Function to read the data from a binary file
-int read_progress_data(const char* filename, FileProgress** progress_array) {
+int load_progress_data(const char* filename, FileProgress** progress_array) {
     FILE* file = fopen(filename, "rb");
     if (!file) {
         perror("Error opening file for reading");
@@ -74,7 +77,13 @@ int read_progress_data(const char* filename, FileProgress** progress_array) {
     int array_size;
     fread(&array_size, sizeof(int), 1, file);
 
-    *progress_array = malloc(array_size * sizeof(FileProgress));
+    // T* arraddnptr(T* a, int n)
+    //   Appends n uninitialized items onto array at the end.
+    //   Returns a pointer to the first uninitialized item added.
+
+    *progress_array = arraddnptr(*progress_array, array_size);
+    assert(arrlen(*progress_array) == array_size);
+    // *progress_array = malloc(array_size * sizeof(FileProgress));
     if (!*progress_array) {
         perror("Memory allocation failed");
         fclose(file);
@@ -124,11 +133,11 @@ int test() {
 
     const char* file = "db.bin";
     // Write data to file
-    write_progress_data(file, progress_array, 2);
+    store_progress_data(file, progress_array, 2);
 
     // Read data from file
     FileProgress* read_array;
-    int read_size = read_progress_data(file, &read_array);
+    int read_size = load_progress_data(file, &read_array);
 
     // Print read data
     for (int i = 0; i < read_size; i++) {

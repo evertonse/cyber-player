@@ -4,6 +4,7 @@ CompileFlags:
     - -D__MINGW32__
     # - -std=c11
     - -DNOB_IMPLEMENTATION
+    - -DSOFTWARE_RENDERER
     - -I/usr/include/mpv
     - -I/usr/local/include
     - -Ivendor

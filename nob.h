@@ -358,7 +358,7 @@ Nob_String_View nob_sv_from_parts(const char *data, size_t count);
 //          platforms
 //    0.0.1 First Official Release
 
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(__MINGW64__)
 #include <dirent.h>
 #else // _WIN32
 
@@ -1089,7 +1089,7 @@ bool nob_sv_eq(Nob_String_View a, Nob_String_View b)
 // -1 - error while checking if file exists. The error is logged
 int nob_file_exists(const char *file_path)
 {
-#if _WIN32
+#if _WIN32 && !defined(__MINGW64__)
     // TODO: distinguish between "does not exists" and other errors
     DWORD dwAttrib = GetFileAttributesA(file_path);
     return dwAttrib != INVALID_FILE_ATTRIBUTES;
@@ -1105,7 +1105,7 @@ int nob_file_exists(const char *file_path)
 }
 
 // minirent.h SOURCE BEGIN ////////////////////////////////////////
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(__MINGW64__)
 struct DIR
 {
     HANDLE hFind;

@@ -1,5 +1,6 @@
 ./nob
 nob
+nob.old
 nob.exe
 ./nob.exe
 *.json
@@ -8,3 +9,5 @@ nob.exe
 .trails
 .bin/
 .png
+.out
+.log

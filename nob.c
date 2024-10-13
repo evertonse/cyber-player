@@ -80,16 +80,17 @@ int main(int argc, char **argv) {
         Nob_Cmd cmd = {0};
 
     #if defined(__MINGW64__)
+        // const char* playfile = "/e/Torrents/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.mkv";
+        const char* playfile = "\\Users\\Administrator\\Downloads\\cat_falls_ass_on_camera.mp4";
         nob_cmd_append(&cmd, nob_temp_sprintf("%s.exe", BIN_DIR "/" BIN));
-        nob_cmd_append(&cmd, "/e/Torrents/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.mkv");
-    #else 
+    #else
+        const char* playfile = "~/media/videos/life_is_everything.mp4";
         nob_cmd_append(&cmd, BIN_DIR "/" BIN);
-        nob_cmd_append(&cmd, "~/media/videos/life_is_everything.mp4");
     #endif
+        nob_cmd_append(&cmd, playfile);
 
         if (!nob_cmd_run_sync(cmd)) return -1;
     }
-
 
     return 0;
 }

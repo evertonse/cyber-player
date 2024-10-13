@@ -24,20 +24,26 @@
 #include <time.h>
 #include <math.h>
 
+#define NOB_IMPLEMENTATION
+#include "./nob.h"
+
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
 
+
+#define HASH_DOES_NOT_EXIST (-1)
+#define FILE_PROGRESS "progress.bin"
+
+#include <dirent.h>
+#include "raylib.h"
+//#include "rcore.h"
+#include "header.h"
 
 #define WINDOW_WIDTH  900
 #define WINDOW_HEIGHT 900
 
 #define PROGRESS_BAR_WIDTH  200
 #define PROGRESS_BAR_HEIGHT 30
-
-#include <dirent.h>
-#include "raylib.h"
-//#include "rcore.h"
-#include "header.h"
 
 
 
@@ -105,23 +111,33 @@ static double* percent_positions = NULL;
 static const char* currently_playing_path = NULL;
 static double percent_position;
 
-static FileProgress* file_progress_list = NULL;
+static FileProgress* file_progress_darray = NULL;
+
+// From key file name to value that index is file_progress_darray;
+static struct { char* key; int value; } * file_progress_hash_map = NULL;
 
 void collect_file_progress_info(void) {
     // Add final segment
     if (segment_start >= 0 && last_position >= 0) {
         add_watched_segment(segment_start, last_position);
     }
-    FileProgress temp = {
-        .segments = watched_segments,
-        .segment_count = arrlen(watched_segments)
-    };
-    TextCopy(temp.filename, currently_playing_path);
-    arrput(file_progress_list, temp);
+    int fp_index = shget(file_progress_hash_map, (char*) currently_playing_path);
+    if (fp_index == HASH_DOES_NOT_EXIST) {
+        FileProgress temp = {
+            .segments = watched_segments,
+            .segment_count = arrlen(watched_segments)
+        };
+        TextCopy(temp.filename, currently_playing_path);
+        arrput(file_progress_darray, temp);
+        fp_index = arrlen(file_progress_darray)-1;
+        shput(file_progress_hash_map, currently_playing_path, fp_index);
+    }
+
+    file_progress_darray[fp_index].segments = watched_segments;
+    file_progress_darray[fp_index].segment_count = arrlen(watched_segments);
 }
 
 void reset_segments_info(void) {
-
     // FIX:  This does not work
     watched_segments = NULL;
     segment_count = 0;
@@ -147,8 +163,19 @@ void player_load_file(void* ctx, const char* file_path)  {
     EndTextureMode();
 
     reset_segments_info();
-    
 
+    int index = shget(file_progress_hash_map, file_path);
+    if (index != HASH_DOES_NOT_EXIST) {
+      FileProgress fp =  file_progress_darray[index];
+      for(int i = 0; i < fp.segment_count; ++i) {
+          Segment s = fp.segments[i];
+          add_watched_segment(s.start, s.end);
+      }
+    }
+    // duration = 0;
+    // last_position = -1;
+    // segment_start = -1;
+    // add_watched_segment(double start, double end);
 }
 
 int wait_for_property(mpv_handle *ctx, const char *name) {
@@ -390,10 +417,30 @@ bool IsKeyPressedOrRepeat(int key) {
 RenderTexture2D mpv_texture;
 FilePathList mp4files;
 int main(int argc, char *argv[]) {
+
+
+    hmdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
+
+    int len = load_progress_data(FILE_PROGRESS, &file_progress_darray);
+    TraceLog(LOG_INFO, "len = %d\n", len);
+    for (int i = 0; i < arrlen(file_progress_darray); i++) {
+        printf("File: %s\n", file_progress_darray[i].filename);
+        printf("Segments:\n");
+        for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
+            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start, file_progress_darray[i].segments[j].end);
+        }
+        printf("\n");
+        shput(file_progress_hash_map, file_progress_darray[i].filename, i);
+    }
+    // exit(69);
+
+
+    
+
     if (argc != 2)
         die("pass a single media file as argument");
+                           mpv_handle *mpv = mpv_create();
 
-    mpv_handle *mpv = mpv_create();
     if (!mpv)
         die("context init failed");
 
@@ -502,14 +549,13 @@ int main(int argc, char *argv[]) {
     }
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
 
-#define FONT_SIZE (64)
+#define FONT_SIZE (19)
 
     Font jetbrains = LoadFontEx("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
     GenTextureMipmaps(&jetbrains.texture);
-    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
-
+    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
     // FILTER_TRILINEAR requires generated mipmaps
-    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
 
 
@@ -609,12 +655,16 @@ int main(int argc, char *argv[]) {
 
     printf("Loaded Texture just fine\n");
 
-    // Play this file.
-    if (!FileExists(argv[1])) {
+    // NOTE: Alternatively, stat() can be used instead of access()
+    #include <sys/stat.h>
+    //struct stat statbuf;
+    //if (stat(filename, &statbuf) == 0) result = true;
 
+    if (!nob_file_exists(argv[1]) || !FileExists(argv[1])) {
+        SetTraceLogLevel(LOG_ALL);
         TraceLog(LOG_ERROR, "File %s does not exist, nothing is being played", argv[1]);
-
     } else {
+        percent_positions = NULL;
         arrsetlen(percent_positions, 0);
         player_load_file(mpv, argv[1]);
     }
@@ -775,8 +825,8 @@ int main(int argc, char *argv[]) {
             }
         #else
             DrawTextureRec(mpv_texture.texture,
-                           (Rectangle){0, 0, (float)mpv_texture.texture.width, (float)mpv_texture.texture.height},
-                           (Vector2){0, 0}, WHITE);
+                           CLITERAL(Rectangle){0, 0, (float)mpv_texture.texture.width, (float)mpv_texture.texture.height},
+                           CLITERAL(Vector2){0, 0}, WHITE);
         #endif
 
 
@@ -790,7 +840,7 @@ int main(int argc, char *argv[]) {
             const int   spacing = 0;
             // const Font  font = GetFontDefault();
             const Font  font       = jetbrains;
-            const float font_size  = 19;
+            const float font_size  = FONT_SIZE;
             Color font_color = RED;
 
 
@@ -887,8 +937,6 @@ int main(int argc, char *argv[]) {
             DrawRectangle(playback_current_x, playback_rect.y, 2, playback_rect.height, RED);
 
         }
-
-
         EndDrawing();
     }
 
@@ -904,17 +952,17 @@ done:
     collect_file_progress_info();
     reset_segments_info();
 
-    for (int i = 0; i < arrlen(file_progress_list); i++) {
+    for (int i = 0; i < arrlen(file_progress_darray); i++) {
 
-        printf("File: %s\n", file_progress_list[i].filename);
+        printf("File: %s\n", file_progress_darray[i].filename);
         printf("Segments:\n");
-        for (int j = 0; j < file_progress_list[i].segment_count; j++) {
-            printf("  %.2f - %.2f\n", file_progress_list[i].segments[j].start, file_progress_list[i].segments[j].end);
+        for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
+            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start, file_progress_darray[i].segments[j].end);
         }
         printf("\n");
     }
 
-    write_progress_data("progress.bin", file_progress_list, arrlen(file_progress_list));
+    store_progress_data(FILE_PROGRESS, file_progress_darray, arrlen(file_progress_darray));
     // Destroy the GL renderer and all of the GL objects it allocated. If video
     // is still running, the video track will be deselected.
 
