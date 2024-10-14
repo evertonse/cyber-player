@@ -25,3 +25,5 @@ void store_progress_data(const char* filename, FileProgress* progress_array, int
 // Function to read the data from a binary file
 int load_progress_data(const char* filename, FileProgress** progress_array);
 
+void print_all_file_progress();
+

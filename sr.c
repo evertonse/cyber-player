@@ -1,153 +1,214 @@
-// TODO: Use nob.h
+// DONE: Use nob.h
 // TODO: Make seeking be based on percentage of file total duration
-// TODO: Mark seen parts
 // TODO: Start from where we left off
 
+// #define GLFW_INCLUDE_NONE       // Disable the standard OpenGL header
+// inclusion on GLFW3
+//                                 // NOTE: Already provided by rlgl
+//                                 implementation (on glad.h)
+// #include "GLFW/glfw3.h"         // GLFW3 library: Windows, OpenGL context and
+// Input management
 
-// #define GLFW_INCLUDE_NONE       // Disable the standard OpenGL header inclusion on GLFW3
-//                                 // NOTE: Already provided by rlgl implementation (on glad.h)
-// #include "GLFW/glfw3.h"         // GLFW3 library: Windows, OpenGL context and Input management
-
+#include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
+#define TRACE(level, ...) TraceLog(level, __VA_ARGS__)
+#define TRACEINFO(...) TraceLog(LOG_INFO, __VA_ARGS__)
 
+/*
+ . Create a realpath replacement macro for when compiling under mingw
+ . Based upon
+ https://stackoverflow.com/questions/45124869/cross-platform-alternative-to-this-realpath-definition
+*/
+#if defined(_WIN32) && defined(__MINGW64__)
+#include "dirent.h"
+#define realpath(N, R) _fullpath((R), (N), PATH_MAX)
+#endif
+
+#include <math.h>
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gl.h>
-#include <string.h>
+#include <pthread.h>
 #include <raylib.h>
-#include <rlgl.h>
 #include <raymath.h>
+#include <rlgl.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
-#include <math.h>
 
+#pragma clang diagnostic push
+// #pragma clang diagnostic ignored "-Wno-padded"
 #define NOB_IMPLEMENTATION
 #include "./nob.h"
+#pragma clang diagnostic pop
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
 
+#define DEFAULT_LOG_LEVEL LOG_NONE
 
 #define HASH_DOES_NOT_EXIST (-1)
 #define FILE_PROGRESS "progress.bin"
 
 #include <dirent.h>
+
 #include "raylib.h"
-//#include "rcore.h"
+// #include "rcore.h"
 #include "header.h"
 
-#define WINDOW_WIDTH  900
+#define WINDOW_WIDTH 900
 #define WINDOW_HEIGHT 900
 
-#define PROGRESS_BAR_WIDTH  200
-#define PROGRESS_BAR_HEIGHT 30
+#define PROGRESS_BAR_WIDTH 200
+#define PROGRESS_BAR_HEIGHT 20
+
+#define pthread_rwlock_rdlock(lock)
+#define pthread_rwlock_unlock(lock)
+#define pthread_rwlock_wrlock(lock)
 
 
-
-void* glfwGetProcAddress(const char* procname);
-static void* get_proc_address_mpv(void *ctx, const char *name) {
+void *glfwGetProcAddress(const char *procname);
+static void *get_proc_address_mpv(void *ctx, const char *name) {
     rlLoadExtensions(glfwGetProcAddress);
     return glfwGetProcAddress(name);
 }
 
 #define MAX_SEGMENTS 1000
 
-static Segment* watched_segments = NULL;
-
-static int segment_count = 0;
-static double duration = 0;
-static double last_position = -1;
-static double segment_start = -1;
+static struct {
+    bool paused;
+    const char *absolute_path;  // It's not absolute rn
+    Segment *watched_segments;
+    pthread_rwlock_t *rwlock;  // Not needed rn
+    int segment_count;
+    double duration;
+    double last_position;
+    double segment_start;
+} sc /* segment_context */ = {
+    .absolute_path = NULL,
+    .paused = false,
+    .watched_segments = NULL,
+    .rwlock = &(pthread_rwlock_t){},
+    .segment_count = 0,
+    .duration = 0,
+    .last_position = -1,
+    .segment_start = -1,
+};
 
 void add_watched_segment(double start, double end) {
-    if (segment_count > MAX_SEGMENTS) {
-        TraceLog(LOG_WARNING, "Darn too many danm segments (%d of max expected %d", segment_count, MAX_SEGMENTS);
+    if (!(start >= 0 && end >= 0)) {
+        TRACE(LOG_ERROR, "%s start (%f) or end (%f)is negative", __PRETTY_FUNCTION__,
+                  start, end);
+        return;
     }
-    arrput(watched_segments, (CLITERAL(Segment){start, end}));
-    segment_count = arrlen(watched_segments);
+    if (end < start) {
+        TRACE(LOG_ERROR, "%s end (%f) is  bigger than start", __PRETTY_FUNCTION__, end, start);
+        return;
+    }
+
+    if (sc.segment_count > MAX_SEGMENTS) {
+        TraceLog(LOG_WARNING,
+                 "Darn too many danm segments (%d of max expected %d",
+                 sc.segment_count, MAX_SEGMENTS);
+    }
+    arrput(sc.watched_segments, (CLITERAL(Segment){start, end}));
+    sc.segment_count = arrlen(sc.watched_segments);
 }
 
 void merge_segments() {
-    if (segment_count <= 1) return;
+    if (sc.segment_count <= 1) return;
 
     int i, j;
-    for (i = 0, j = 1; j < segment_count; j++) {
-        if (watched_segments[i].end >= watched_segments[j].start) {
-            watched_segments[i].end = fmax(watched_segments[i].end, watched_segments[j].end);
+    for (i = 0, j = 1; j < sc.segment_count; j++) {
+        if (sc.watched_segments[i].end >= sc.watched_segments[j].start) {
+            sc.watched_segments[i].end =
+                fmax(sc.watched_segments[i].end, sc.watched_segments[j].end);
         } else {
-
             i++;
-            watched_segments[i] = watched_segments[j];
-
+            sc.watched_segments[i] = sc.watched_segments[j];
         }
     }
-    segment_count = i + 1;
+    sc.segment_count = i + 1;
 }
-
-
-
-
 
 // #define NOB_IMPLEMENTATION
 // #include "nob.h"
-static RenderTexture2D progress_bar_render_texture;
 
-
-#if defined(__MINGW64_VERSION_MAJOR) || defined(__MINGW64__) || defined(__MINGW32__)
-    #define MINGW
+#if defined(__MINGW64_VERSION_MAJOR) || defined(__MINGW64__) || \
+    defined(__MINGW32__)
+#define MINGW
 #endif
 
+static pthread_mutex_t *render_update_mutex = &(pthread_mutex_t){},
+                       *event_wakeup_mutex = &(pthread_mutex_t){};
 
-#if !defined(MINGW)
-    #include <glib.h>
-    GMutex  mutex;
-#endif
-
-
-static double* percent_positions = NULL;
-static const char* currently_playing_path = NULL;
+static double *percent_positions = NULL;
+static const char *currently_playing_path = NULL;
 static double percent_position;
+static double volume;
+static bool seeking = false;
 
-static FileProgress* file_progress_darray = NULL;
+static FileProgress *file_progress_darray = NULL;
 
 // From key file name to value that index is file_progress_darray;
-static struct { char* key; int value; } * file_progress_hash_map = NULL;
+static struct {
+    char *key;
+    int value;
+} *file_progress_hash_map = NULL;
 
 void collect_file_progress_info(void) {
     // Add final segment
-    if (segment_start >= 0 && last_position >= 0) {
-        add_watched_segment(segment_start, last_position);
-    }
-    int fp_index = shget(file_progress_hash_map, (char*) currently_playing_path);
+
+    // Acquire "rights" to read
+    double start = sc.segment_start, last_position = sc.last_position;
+
+    add_watched_segment(start, last_position);
+
+
+    char buffer[PATH_MAX];
+    // Assuming it's null terminated
+    realpath(currently_playing_path, buffer);
+    int fp_index = shget(file_progress_hash_map, buffer);
     if (fp_index == HASH_DOES_NOT_EXIST) {
-        FileProgress temp = {
-            .segments = watched_segments,
-            .segment_count = arrlen(watched_segments)
-        };
-        TextCopy(temp.filename, currently_playing_path);
+        FileProgress temp = {.segments = sc.watched_segments,
+
+                             .segment_count = arrlen(sc.watched_segments)};
+        // If RESOLVED is null, the result is malloc'd
+        realpath(currently_playing_path, temp.filename);
+        // Alternatively: TextCopy(temp.filename, currently_playing_path);
+
         arrput(file_progress_darray, temp);
-        fp_index = arrlen(file_progress_darray)-1;
+        fp_index = arrlen(file_progress_darray) - 1;
         shput(file_progress_hash_map, currently_playing_path, fp_index);
     }
+    file_progress_darray[fp_index].segments = sc.watched_segments;
+    file_progress_darray[fp_index].segment_count = arrlen(sc.watched_segments);
 
-    file_progress_darray[fp_index].segments = watched_segments;
-    file_progress_darray[fp_index].segment_count = arrlen(watched_segments);
 }
 
 void reset_segments_info(void) {
     // FIX:  This does not work
-    watched_segments = NULL;
-    segment_count = 0;
-    duration = 0;
-    last_position = -1;
-    segment_start = -1;
+    sc.watched_segments = NULL;
+    sc.segment_count = 0;
+    sc.duration = 0;
+    sc.last_position = -1;
+    sc.segment_start = -1;
 }
 
-void player_load_file(void* ctx, const char* file_path)  {
+void player_unpause(void *ctx) {
+    const char *cmd[] = {"set", "pause", "no", NULL};
+    mpv_command_async(ctx, 0, cmd);
+}
 
+void player_pause(void *ctx) {
+    // const char *cmd[] = {"pause", NULL};
+    const char *cmd[] = {"set", "pause", "yes", NULL};
+    mpv_command_async(ctx, 0, cmd);
+}
+
+void player_load_file(void *ctx, const char *file_path) {
     if (currently_playing_path != NULL) {
         collect_file_progress_info();
     }
@@ -156,33 +217,46 @@ void player_load_file(void* ctx, const char* file_path)  {
     currently_playing_path = file_path;
     mpv_command_async(ctx, 0, cmd);
 
-    BeginTextureMode(progress_bar_render_texture);
-    {
-        ClearBackground(BLACK);
-    }
-    EndTextureMode();
-
     reset_segments_info();
 
-    int index = shget(file_progress_hash_map, file_path);
-    if (index != HASH_DOES_NOT_EXIST) {
-      FileProgress fp =  file_progress_darray[index];
-      for(int i = 0; i < fp.segment_count; ++i) {
-          Segment s = fp.segments[i];
-          add_watched_segment(s.start, s.end);
-      }
+    char buffer[PATH_MAX];
+    // Assuming it's null terminated
+    realpath(file_path, buffer);
+    int index = shget(file_progress_hash_map, buffer);
+
+    printf("\n\n\nCURRENT FILE = %s\n", buffer);
+    print_all_file_progress();
+    for (int i = 0; i < shlen(file_progress_hash_map); ++i) {
+        printf("\nkey:%s | value:%d found_idx:%d\n",
+               file_progress_hash_map[i].key, file_progress_hash_map[i].value,
+               index);
     }
-    // duration = 0;
-    // last_position = -1;
-    // segment_start = -1;
-    // add_watched_segment(double start, double end);
+
+    if (index != HASH_DOES_NOT_EXIST) {
+        FileProgress fp = file_progress_darray[index];
+        printf("\nfpcount:%ld\n", fp.segment_count);
+        for (int i = 0; i < fp.segment_count; ++i) {
+            Segment s = fp.segments[i];
+            printf("\nfpstart:%f | fpend:%f\n", fp.segments[i].start,
+                   fp.segments[i].end);
+            add_watched_segment(s.start, s.end);
+        }
+    }
+
+    printf("\n len of watched:%d\n", arrlen(sc.watched_segments));
+    for (int i = 0; i < arrlen(sc.watched_segments); ++i) {
+        printf("\nstart:%f | end:%f\n", sc.watched_segments[i].start,
+               sc.watched_segments[i].end);
+    }
+
+    player_unpause(ctx);
 }
 
 int wait_for_property(mpv_handle *ctx, const char *name) {
     mpv_observe_property(ctx, 0, name, MPV_FORMAT_NONE);
 
     while (1) {
-        mpv_event *event = mpv_wait_event(ctx, 10);
+        mpv_event *event = mpv_wait_event(ctx, 0);
         if (event->event_id == MPV_EVENT_NONE) {
             continue;
         }
@@ -196,7 +270,6 @@ int wait_for_property(mpv_handle *ctx, const char *name) {
         }
         if (event->event_id == MPV_EVENT_SHUTDOWN) {
             return -1;
-
         }
     }
 }
@@ -207,7 +280,6 @@ double mpv_get_property_double(mpv_handle *ctx, const char *name) {
     if (err < 0) {
         printf("Failed to get %s: %s\n", name, mpv_error_string(err));
         return -1;
-
     }
     return value;
 }
@@ -222,7 +294,6 @@ static int64_t mpv_get_property_int64(mpv_handle *ctx, const char *name) {
     return value;
 }
 
-
 static inline void mpv_check_error(int status) {
     if (status < 0) {
         printf("mpv API error: %s\n", mpv_error_string(status));
@@ -234,60 +305,73 @@ static void on_property_change(mpv_event_property *prop) {
     // MPV_FORMAT_INT64            = 4,
     // MPV_FORMAT_DOUBLE           = 5,
 
-    if (prop == NULL)
-        return;
+    if (prop == NULL) return;
 
     TraceLog(LOG_INFO, "on_property_change event->name=%s", prop->name);
     static int last_time = 0;
     if (strcmp(prop->name, "percent-pos") == 0) {
-        if(prop->format == MPV_FORMAT_DOUBLE) {
+        if (prop->format == MPV_FORMAT_DOUBLE) {
             percent_position = *(double *)prop->data;
             arrput(percent_positions, percent_position);
 
             double time_position = *(double *)prop->data;
-            TraceLog(LOG_INFO,"percent-pos:%.2f%%\n", percent_position);
-
-            BeginTextureMode(progress_bar_render_texture);
-            {
-                DrawRectangle((percent_position/100)*PROGRESS_BAR_WIDTH, 0, 2, PROGRESS_BAR_HEIGHT, GREEN);
-            }
-            EndTextureMode();
+            TraceLog(LOG_INFO, "percent-pos:%.2f%%\n", percent_position);
         }
     }
 
+    if (strcmp(prop->name, "pause") == 0) {
+        assert(prop->format == MPV_FORMAT_FLAG);
+
+        sc.paused = *(bool *)prop->data;
+        TraceLog(LOG_ERROR, "Current %s: %s\n", prop->name,
+                 sc.paused ? "true" : "false");
+    }
+
     if (strcmp(prop->name, "volume") == 0) {
-        if(prop->format == MPV_FORMAT_DOUBLE) {
-            double volume = *(double *)prop->data;
-            assert(MPV_FORMAT_DOUBLE == prop->format);
+        if (prop->format == MPV_FORMAT_DOUBLE) {
+            volume = *(double *)prop->data;
             TraceLog(LOG_INFO, "Current %s: %.2f\n", prop->name, volume);
         }
     }
 
-
-    #define PLAYBACK_GAP_SIZE 1.0
-    // playback-time does the same thing as time-pos but works for streaming media
+#define PLAYBACK_GAP_SIZE 1.0
+    // playback-time does the same thing as time-pos but works for streaming
+    // media
     if (strcmp(prop->name, "playback-time") == 0) {
-
-        if(prop->format == MPV_FORMAT_DOUBLE) {
+        // NOTE: Even if we say we only want double format
+        // sometimes its format is something else
+        if (prop->format == MPV_FORMAT_DOUBLE) {
             double playback_time = *(double *)prop->data;
             double time_position = playback_time;
             TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, playback_time);
 
-            if (last_position < 0) {
-                segment_start = time_position;
-            } else if ((time_position < segment_start) ||(fabsf(time_position - last_position) > PLAYBACK_GAP_SIZE)) {
-                // Gap in playback, end current segment
-                add_watched_segment(segment_start, last_position);
-                segment_start = time_position;
+            double start = sc.segment_start, last_position = sc.last_position;
+            bool paused = sc.paused;
+
+            if (paused || seeking) {
+                goto playback_time_done;
             }
 
-            last_position = time_position;
+            if (last_position < 0) {
+                sc.segment_start = time_position;
+            } else if ((time_position < start) ||
+                       (fabs(time_position - last_position) >
+                        PLAYBACK_GAP_SIZE)) {
+                // Gap in playback, end current segment
+                add_watched_segment(start, last_position);
+
+                sc.segment_start = time_position;
+            }
+
+            sc.last_position = time_position;
         }
     }
+playback_time_done:
 
-    // playback-time does the same thing as time-pos but works for streaming media
+    // playback-time does the same thing as time-pos but works for streaming
+    // media
     if (strcmp(prop->name, "osd-dimensions") == 0) {
-        if(prop->format == MPV_FORMAT_INT64) {
+        if (prop->format == MPV_FORMAT_INT64) {
             int64_t osd_dimensions = *(int64_t *)prop->data;
             assert(MPV_FORMAT_INT64 == prop->format);
             TraceLog(LOG_INFO, "Current %s: %ld\n", prop->name, osd_dimensions);
@@ -295,78 +379,68 @@ static void on_property_change(mpv_event_property *prop) {
     }
 
     if (strcmp(prop->name, "duration") == 0) {
-        if(prop->format == MPV_FORMAT_DOUBLE) {
-            duration = *(double *)prop->data;
-            TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, duration);
+        if (prop->format == MPV_FORMAT_DOUBLE) {
+            sc.duration = *(double *)prop->data;
+            TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, sc.duration);
         }
         // assert(0);
     }
 
     if (strcmp(prop->name, "time-pos") == 0) {
-        if(prop->format == MPV_FORMAT_DOUBLE) {
+        if (prop->format == MPV_FORMAT_DOUBLE) {
             double time_position = *(double *)prop->data;
             TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, time_position);
-            // if (last_position < 0) {
+            // if (segment_control.last_position < 0) {
             //     segment_start = time_position;
-            // } else if (time_position - last_position > 1.0) {
+            // } else if (time_position - segment_control.last_position > 1.0) {
             //     // Gap in playback, end current segment
-            //     add_watched_segment(segment_start, last_position);
-            //     segment_start = time_position;
+            //     add_watched_segment(segment_start,
+            //     segment_control.last_position); segment_start =
+            //     time_position;
             // }
             //
-            // last_position = time_position;
+            // segment_control.last_position = time_position;
         }
     }
-
 }
-
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
     exit(1);
 }
 
-static int redraw = 0;
+static int redraw = 1;
 
 static void on_mpv_render_update(void *ctx) {
     mpv_render_context *mpv_rd = ctx;
-    if (mpv_rd == NULL) { return; }
+    if (mpv_rd == NULL) {
+        return;
+    }
     uint64_t flags = mpv_render_context_update(mpv_rd);
     if (flags & MPV_RENDER_UPDATE_FRAME) {
-
-#if !defined(MINGW)
-       g_mutex_lock(&mutex);
-#endif
-       redraw = 1;
-#if !defined(MINGW)
-       g_mutex_unlock(&mutex);
-#endif
-
+        pthread_mutex_lock(render_update_mutex);
+        redraw = 1;
+        pthread_mutex_unlock(render_update_mutex);
     }
 }
 
 static int wakeup = 0;
 
 static void on_mpv_events(void *ctx) {
-
-#if !defined(MINGW)
-       g_mutex_lock(&mutex);
-#endif
-       wakeup = 1;
-#if !defined(MINGW)
-       g_mutex_unlock(&mutex);
-#endif
+    pthread_mutex_lock(event_wakeup_mutex);
+    wakeup = 1;
+    pthread_mutex_unlock(event_wakeup_mutex);
 }
 
 static void handle_mpv_events(mpv_handle *mpv) {
     static int times_called = 0;
     times_called += 1;
     while (mpv) {
-        mpv_event *mp_event = mpv_wait_event(mpv, 0);
-        // TraceLog(LOG_ERROR, "times_called:%d event:%s\n", times_called, mpv_event_name(mp_event->event_id));
+        mpv_event *mp_event = mpv_wait_event(mpv, 0.0);
+        // TraceLog(LOG_ERROR, "times_called:%d event:%s\n", times_called,
+        // mpv_event_name(mp_event->event_id));
 
-        if (mp_event == NULL ||mp_event->event_id == MPV_EVENT_NONE)
-            break;
+        if (mp_event == NULL || mp_event->event_id == MPV_EVENT_NONE) break;
 
         /**
          * The meaning and contents of the data member depend on the event_id:
@@ -374,22 +448,22 @@ static void handle_mpv_events(mpv_handle *mpv) {
          *  MPV_EVENT_PROPERTY_CHANGE:        mpv_event_property*
          *  MPV_EVENT_LOG_MESSAGE:            mpv_event_log_message*
          *  MPV_EVENT_CLIENT_MESSAGE:         mpv_event_client_message*
-         *  MPV_EVENT_START_FILE:             mpv_event_start_file* (since v1.108)
-         *  MPV_EVENT_END_FILE:               mpv_event_end_file*
+         *  MPV_EVENT_START_FILE:             mpv_event_start_file* (since
+         * v1.108) MPV_EVENT_END_FILE:               mpv_event_end_file*
          *  MPV_EVENT_HOOK:                   mpv_event_hook*
          *  MPV_EVENT_COMMAND_REPLY*          mpv_event_command*
          *  other: NULL
          *
-         * Note: future enhancements might add new event structs for existing or new
-         *       event types.
+         * Note: future enhancements might add new event structs for existing or
+         * new event types.
          */
 
-
         if (mp_event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            printf("uint64_t reply_userdata = %d;\n", mp_event->reply_userdata);
-            printf("uint64_t error = %d;\n", mp_event->error);
+            TraceLog(LOG_INFO, "uint64_t reply_userdata = %ld;\n",
+                     mp_event->reply_userdata);
+            TraceLog(LOG_INFO, "uint64_t error = %d;\n", mp_event->error);
 
-            mpv_event_property*  prop = mp_event->data;
+            mpv_event_property *prop = mp_event->data;
             on_property_change(prop);
         }
 
@@ -401,8 +475,7 @@ static void handle_mpv_events(mpv_handle *mpv) {
             // any time, so it's possible this logging stops working
             // in the future.)
 
-            if (strstr(msg->text, "DR image"))
-                printf("log: %s", msg->text);
+            if (strstr(msg->text, "DR image")) printf("log: %s", msg->text);
             continue;
         }
         if (mp_event->event_id == MPV_EVENT_IDLE) {
@@ -414,12 +487,16 @@ bool IsKeyPressedOrRepeat(int key) {
     return IsKeyPressed(key) || IsKeyPressedRepeat(key);
 }
 
-RenderTexture2D mpv_texture;
+static RenderTexture2D mpv_texture;
 FilePathList mp4files;
+
 int main(int argc, char *argv[]) {
+    pthread_mutex_init(event_wakeup_mutex, NULL);
+    pthread_mutex_init(render_update_mutex, NULL);
+    pthread_rwlock_init(sc.rwlock, NULL);
+    SetTraceLogLevel(DEFAULT_LOG_LEVEL);
 
-
-    hmdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
+    shdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
 
     int len = load_progress_data(FILE_PROGRESS, &file_progress_darray);
     TraceLog(LOG_INFO, "len = %d\n", len);
@@ -427,23 +504,17 @@ int main(int argc, char *argv[]) {
         printf("File: %s\n", file_progress_darray[i].filename);
         printf("Segments:\n");
         for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
-            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start, file_progress_darray[i].segments[j].end);
+            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start,
+                   file_progress_darray[i].segments[j].end);
         }
         printf("\n");
         shput(file_progress_hash_map, file_progress_darray[i].filename, i);
     }
-    // exit(69);
 
+    if (argc != 2) die("pass a single media file as argument");
+    mpv_handle *mpv = mpv_create();
 
-    
-
-    if (argc != 2)
-        die("pass a single media file as argument");
-                           mpv_handle *mpv = mpv_create();
-
-    if (!mpv)
-        die("context init failed");
-
+    if (!mpv) die("context init failed");
 
     mpv_set_option_string(mpv, "force-window", "yes");
     int keep_open = 1;
@@ -451,162 +522,135 @@ int main(int argc, char *argv[]) {
     mpv_set_option_string(mpv, "osc", "no");  // Disable on-screen controller
     mpv_set_option_string(mpv, "osd-level", "0");  // Disable on-screen display
 
-    mpv_set_option_string(mpv, "input-default-bindings", "no");  // Disable default key bindings
-    mpv_set_option_string(mpv, "input-vo-keyboard", "no");  // Disable keyboard input on video output
-    mpv_set_option_string(mpv, "audio-display", "no");  // Disable audio visualization
+    mpv_set_option_string(mpv, "input-default-bindings",
+                          "no");  // Disable default key bindings
+    mpv_set_option_string(mpv, "input-vo-keyboard",
+                          "no");  // Disable keyboard input on video output
+    mpv_set_option_string(mpv, "audio-display",
+                          "no");  // Disable audio visualization
 
     mpv_check_error(mpv_set_option_string(mpv, "vo", "libmpv"));
 
+    // mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid);
+    mpv_set_option_string(mpv, "input-cursor", "no");  // no mouse handling
+    mpv_set_option_string(mpv, "cursor-autohide",
+                          "no");  // no cursor-autohide, we handle that
+
+    mpv_set_option_string(mpv, "ytdl", "yes");  // youtube-dl support
+    mpv_set_option_string(mpv, "sub-auto",
+                          "fuzzy");  // Automatic subfile detection
+    mpv_set_option_string(
+        mpv, "audio-client-name",
+        "our-mplayer");  // show correct icon in e.g. pavucontrol
 
     // Some minor options can only be set before mpv_initialize().
-    if (mpv_initialize(mpv) < 0)
-        die("mpv init failed");
+    if (mpv_initialize(mpv) < 0) die("mpv init failed");
     TraceLog(LOG_INFO, "MPV initialized with success");
     // get length
 
-        // set mpv options
+    // set mpv options
     // int64_t wid;
-    // mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid);
-    mpv_set_option_string(mpv, "input-cursor", "no");   // no mouse handling
-    mpv_set_option_string(mpv, "cursor-autohide", "no");// no cursor-autohide, we handle that
-
-    mpv_set_option_string(mpv, "ytdl", "yes"); // youtube-dl support
-    mpv_set_option_string(mpv, "sub-auto", "fuzzy"); // Automatic subfile detection
-    mpv_set_option_string(mpv, "audio-client-name", "our-mplayer"); // show correct icon in e.g. pavucontrol
-
 
     mpv_request_log_messages(mpv, "debug");
 
+    mpv_check_error(mpv_observe_property(mpv, 69, "volume", MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 69, "sid", MPV_FORMAT_INT64));
+    mpv_check_error(mpv_observe_property(mpv, 69, "aid", MPV_FORMAT_INT64));
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "volume", MPV_FORMAT_DOUBLE)
-    );
+        mpv_observe_property(mpv, 69, "sub-visibility", MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69, "mute", MPV_FORMAT_FLAG));
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "sid", MPV_FORMAT_INT64)
-    );
-    // mpv_check_error(
-    //     mpv_observe_property(mpv, 69, "aid", MPV_FORMAT_INT64)
-    // );
+        mpv_observe_property(mpv, 69, "core-idle", MPV_FORMAT_FLAG));
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "sub-visibility", MPV_FORMAT_FLAG)
-    );
+        mpv_observe_property(mpv, 69, "idle-active", MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69, "pause", MPV_FORMAT_FLAG));
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "mute", MPV_FORMAT_FLAG)
-    );
+        mpv_observe_property(mpv, 69, "paused-for-cache", MPV_FORMAT_FLAG));
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "core-idle", MPV_FORMAT_FLAG)
-    );
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "idle-active", MPV_FORMAT_FLAG)
-    );
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "pause", MPV_FORMAT_FLAG)
-    );
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "paused-for-cache", MPV_FORMAT_FLAG)
-    );
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "percent-pos", MPV_FORMAT_DOUBLE)
-    );
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "pause", MPV_FORMAT_INT64)
-    );
+        mpv_observe_property(mpv, 69, "percent-pos", MPV_FORMAT_DOUBLE));
 
     mpv_check_error(
-        mpv_observe_property(mpv, 420, "playback-time", MPV_FORMAT_DOUBLE)
-    );
+        mpv_observe_property(mpv, 420, "playback-time", MPV_FORMAT_DOUBLE));
 
     mpv_check_error(
-        mpv_observe_property(mpv, 420, "time-pos", MPV_FORMAT_DOUBLE)
-    );
-
+        mpv_observe_property(mpv, 420, "time-pos", MPV_FORMAT_DOUBLE));
 
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "osd-dimensions", MPV_FORMAT_INT64)
-    );
+        mpv_observe_property(mpv, 69, "osd-dimensions", MPV_FORMAT_INT64));
 
     mpv_check_error(
-        mpv_observe_property(mpv, 69, "duration", MPV_FORMAT_DOUBLE)
-    );
+        mpv_observe_property(mpv, 69, "duration", MPV_FORMAT_DOUBLE));
 
-
-
-#define FILES_LISTING_LIMIT  10
+#define FILES_LISTING_LIMIT 10
 
 #if defined(MINGW)
-    // const char* dir = "E:\\Torrents\\Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN";
-    const char* dir = "C:\\Users\\Administrator\\Downloads";
+    // const char* dir =
+    // "E:\\Torrents\\Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN";
+    const char *dir = "C:\\Users\\Administrator\\Downloads";
     // TODO: Add better file filtering for Raylib
     mp4files = LoadDirectoryFilesEx(dir, ".mp4", true);
     // mp4files = LoadDirectoryFiles(dir);
 #else
-    mp4files = LoadDirectoryFilesEx("/home/excyber/media/videos/", ".mp4", true);
+    mp4files =
+        LoadDirectoryFilesEx("/home/excyber/media/videos/", ".mp4", true);
 #endif
-    mp4files.count =  mp4files.count < FILES_LISTING_LIMIT ? mp4files.count: FILES_LISTING_LIMIT;
+    mp4files.count = mp4files.count < FILES_LISTING_LIMIT ? mp4files.count
+                                                          : FILES_LISTING_LIMIT;
 
     printf("mp4files.count: %d\n", mp4files.count);
-    for (int i = 0; i < mp4files.count ; ++i) {
+    for (int i = 0; i < mp4files.count; ++i) {
         printf("%s\n", mp4files.paths[i]);
     }
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
 
 #define FONT_SIZE (19)
 
-    Font jetbrains = LoadFontEx("./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
+    Font jetbrains = LoadFontEx(
+        "./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
     GenTextureMipmaps(&jetbrains.texture);
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
     // FILTER_TRILINEAR requires generated mipmaps
     SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
 
-
-
-
     mpv_texture = LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    SetWindowState(
-        FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN
-        | FLAG_WINDOW_HIGHDPI
+    SetWindowState(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN |
+                   FLAG_WINDOW_HIGHDPI
 
-        // support mouse passthrough, only supported when FLAG_WINDOW_UNDECORATED
-        // | FLAG_WINDOW_UNDECORATED
-        // | FLAG_WINDOW_MOUSE_PASSTHROUGH
-        | FLAG_VSYNC_HINT
+                   // support mouse passthrough, only supported when
+                   // FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_UNDECORATED |
+                   // FLAG_WINDOW_MOUSE_PASSTHROUGH
+                   | FLAG_VSYNC_HINT
 
-        | FLAG_MSAA_4X_HINT
-        | FLAG_INTERLACED_HINT
-        // run program in borderless windowed mode
-        // | FLAG_BORDERLESS_WINDOWED_MODE
+                   | FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT
+                   // run program in borderless windowed mode
+                   // | FLAG_BORDERLESS_WINDOWED_MODE
     );
 
-    SetConfigFlags(
-        FLAG_MSAA_4X_HINT
-        | FLAG_INTERLACED_HINT
-    );
+    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT);
 
-    progress_bar_render_texture = LoadRenderTexture(PROGRESS_BAR_WIDTH, PROGRESS_BAR_HEIGHT);
-
-    TraceLog(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(), GetScreenHeight());
+    TraceLog(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(),
+             GetScreenHeight());
 
 #if defined(SOFTWARE_RENDERER)
 
     mpv_render_context *mpv_rd;
     {
-
         mpv_render_param params[] = {
             {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_SW},
-            // Tell libmpv that you will call mpv_render_context_update() on render
-            // context update callbacks, and that you will _not_ block on the core
-            // ever (see <libmpv/render.h> "Threading" section for what libmpv
-            // functions you can call at all when this is active).
+            // Tell libmpv that you will call mpv_render_context_update() on
+            // render context update callbacks, and that you will _not_ block
+            // on the core ever (see <libmpv/render.h> "Threading" section for
+            // what libmpv functions you can call at all when this is active).
             // In particular, this means you must call e.g. mpv_command_async()
             // instead of mpv_command().
-            // If you want to use synchronous calls, either make them on a separate
-            // thread, or remove the option below (this will disable features like
-            // DR and is not recommended anyway).
+            // If you want to use synchronous calls, either make them on a
+            // separate thread, or remove the option below (this will disable
+            // features like DR and is not recommended anyway).
 
             {MPV_RENDER_PARAM_ADVANCED_CONTROL, &(int){1}},
-            {0}
-        };
+            {0}};
 
         // SwapScreenBuffer();
         // PollInputEvents();
@@ -627,91 +671,82 @@ int main(int argc, char *argv[]) {
             {MPV_RENDER_PARAM_API_TYPE, MPV_RENDER_API_TYPE_OPENGL},
             {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl_init_params},
             // {MPV_RENDER_PARAM_ADVANCED_CONTROL, &(int){1}},
-            {0}
-        };
+            {0}};
         if (mpv_render_context_create(&mpv_gl, mpv, params) < 0) {
             printf("Failed to initialize MPV GL context\n");
             return 1;
         }
-
     }
 
 #endif
-
 
     printf("Setting up mpv_set_wakeup_callback");
     mpv_set_wakeup_callback(mpv, on_mpv_events, mpv);
     printf("Setting up mpv_render_context_set_update_callback");
 #if defined(SOFTWARE_RENDERER)
-    mpv_render_context_set_update_callback(mpv_rd, on_mpv_render_update, mpv_rd);
+    mpv_render_context_set_update_callback(mpv_rd, on_mpv_render_update,
+                                           mpv_rd);
 #else
-    mpv_render_context_set_update_callback(mpv_gl, on_mpv_render_update, mpv_gl);
+    mpv_render_context_set_update_callback(mpv_gl, on_mpv_render_update,
+                                           mpv_gl);
 #endif
 
     printf("About to load texture\n");
-    Image image = { NULL, WINDOW_WIDTH, WINDOW_HEIGHT, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 };
+    Image image = {NULL, WINDOW_WIDTH, WINDOW_HEIGHT, 1,
+                   PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
     Texture tex = LoadTextureFromImage(image);
     UnloadImage(image);
 
     printf("Loaded Texture just fine\n");
 
-    // NOTE: Alternatively, stat() can be used instead of access()
-    #include <sys/stat.h>
-    //struct stat statbuf;
-    //if (stat(filename, &statbuf) == 0) result = true;
+// NOTE: Alternatively, stat() can be used instead of access()
+#include <sys/stat.h>
+    // struct stat statbuf;
+    // if (stat(filename, &statbuf) == 0) result = true;
 
     if (!nob_file_exists(argv[1]) || !FileExists(argv[1])) {
-        SetTraceLogLevel(LOG_ALL);
-        TraceLog(LOG_ERROR, "File %s does not exist, nothing is being played", argv[1]);
+        TraceLog(LOG_ERROR, "File %s does not exist, nothing is being played",
+                 argv[1]);
     } else {
         percent_positions = NULL;
         arrsetlen(percent_positions, 0);
         player_load_file(mpv, argv[1]);
     }
+    player_pause(mpv);
 
     // Wait until the file is loaded
 
-    mpv_wait_event(mpv, -1);
+    mpv_wait_event(mpv, -1.0);
 
-    // double pfps = mpv_get_property_double(mpv, "container-fps");
+// double pfps = mpv_get_property_double(mpv, "container-fps");
 
+// int64_t total_frames = (int64_t)(duration * pfps);
 
-    // int64_t total_frames = (int64_t)(duration * pfps);
-
-    // printf("duration:%f fps:%f total_frames:%ld\r", duration, pfps, total_frames);
-    // #define FPS 75
-    // #define FPS 60
-    #define FPS 35
+// printf("duration:%f fps:%f total_frames:%ld\r", duration, pfps,
+// total_frames); #define FPS 75 #define FPS 60
+#define FPS 35
     SetTargetFPS(FPS);
     char fps[123];
 
-
-    BeginDrawing();
-        BeginTextureMode(progress_bar_render_texture);
-        {
-            // Claer only once
-            ClearBackground(RAYWHITE);
-        }
-    EndDrawing();
-
-    void* pixels = malloc(sizeof(char)*4*2000*2000);
+    void *pixels = malloc(sizeof(char) * 4 * 2000 * 2000);
     bool draw_file_list = false;
     while (!WindowShouldClose()) {
         BeginDrawing();
         EndTextureMode();
         ClearBackground(RAYWHITE);
 
-        SetTraceLogLevel(LOG_NONE);
         Vector2 mouse_pos = GetMousePosition();
         Vector2 mouse_wheel = GetMouseWheelMoveV();
-        TraceLog(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x, mouse_wheel.y);
-
+        TraceLog(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
+                 mouse_wheel.y);
 
         if (IsKeyPressedOrRepeat(KEY_LEFT)) {
-            const char *mpv_cmd[] = {"seek", "-5", "relative", "keyframes", NULL};
+            const char *mpv_cmd[] = {"seek", "-5", "relative", "keyframes",
+                                     NULL};
             mpv_command_async(mpv, 1, mpv_cmd);
         } else if (IsKeyPressedOrRepeat(KEY_RIGHT)) {
-            const char *mpv_cmd[] = {"seek", "5", "relative", "keyframes", NULL};
+            const char *mpv_cmd[] = {"seek", "5", "relative", "keyframes",
+                                     NULL};
             mpv_command_async(mpv, 0, mpv_cmd);
         } else if (IsKeyPressedOrRepeat(KEY_UP)) {
             const char *mpv_cmd[] = {"osd-auto", "add", "volume", "6", NULL};
@@ -736,7 +771,8 @@ int main(int argc, char *argv[]) {
                 char temp[5];
                 int diff = (int)(5.0 * mouse_wheel.y);
                 snprintf(temp, sizeof(temp), "%d", diff);
-                const char *cmd_pause[] = {"osd-auto", "add", "volume", temp, NULL};
+                const char *cmd_pause[] = {"osd-auto", "add", "volume", temp,
+                                           NULL};
                 mpv_command_async(mpv, 0, cmd_pause);
             }
         }
@@ -744,35 +780,41 @@ int main(int argc, char *argv[]) {
         if (IsKeyPressed(KEY_SPACE)) {
             const char *cmd_pause[] = {"cycle", "pause", NULL};
             mpv_command_async(mpv, 0, cmd_pause);
-        } else if(IsKeyPressed(KEY_S)) {
+        } else if (IsKeyPressed(KEY_S)) {
             // Also requires MPV_RENDER_PARAM_ADVANCED_CONTROL if you want
             // screenshots to be rendered on GPU (like --vo=gpu would do).
-            const char *cmd_scr[] = {"screenshot-to-file",
-                                     "screenshot.png",
-                                     "window",
-                                     NULL};
+            const char *cmd_scr[] = {"screenshot-to-file", "screenshot.png",
+                                     "window", NULL};
             printf("attempting to save screenshot to %s\n", cmd_scr[1]);
 
             mpv_command_async(mpv, 0, cmd_scr);
         }
 
-        if (wakeup) {
+        pthread_mutex_lock(event_wakeup_mutex);
+        bool woke = wakeup;
+        wakeup = false;
+        pthread_mutex_unlock(event_wakeup_mutex);
+
+        if (woke) {
             handle_mpv_events(mpv);
-            wakeup = 0;
         }
-        if (redraw) {
-        #if defined(SOFTWARE_RENDERER)
+
+        pthread_mutex_lock(render_update_mutex);
+        bool should_redraw = redraw;
+        pthread_mutex_unlock(render_update_mutex);
+
+        if (should_redraw) {
+#if defined(SOFTWARE_RENDERER)
             int w = GetScreenWidth();
             int h = GetScreenHeight();
-            int pitch = w*4;
+            int pitch = w * 4;
 
             mpv_render_param params[] = {
                 {MPV_RENDER_PARAM_SW_SIZE, (int[2]){w, h}},
                 {MPV_RENDER_PARAM_SW_FORMAT, "rgba"},
                 {MPV_RENDER_PARAM_SW_STRIDE, &(size_t){pitch}},
                 {MPV_RENDER_PARAM_SW_POINTER, pixels},
-                {0}
-            };
+                {0}};
             int r = mpv_render_context_render(mpv_rd, params);
             if (r < 0) {
                 printf("mpv_render_context_render error: %s\n",
@@ -782,7 +824,7 @@ int main(int argc, char *argv[]) {
             image.data = pixels;
             image.width = w;
             image.height = h;
-        #else
+#else
             // Render video frame to texture
             mpv_opengl_fbo fbo = {
                 .fbo = mpv_texture.id,
@@ -790,117 +832,123 @@ int main(int argc, char *argv[]) {
                 .h = mpv_texture.texture.height,
             };
             mpv_render_param render_params[] = {
-                {MPV_RENDER_PARAM_OPENGL_FBO, &fbo},
-                {0}
-            };
+                {MPV_RENDER_PARAM_OPENGL_FBO, &fbo}, {0}};
             mpv_render_context_render(mpv_gl, render_params);
 
-        #endif
-
+#endif
         }
-          // Create a texture from the RGBA pixel data
-        SetTraceLogLevel(LOG_NONE);
+        // Create a texture from the RGBA pixel data
         //
         // TODO: Change to UpdateTexture in a way that it works with
-        // change in widht and height, rn we need to Load Everytime, which is wasteful as shit
-        // we can even print something to check if we're getting new texture id's all the time
-        // problably yeah
+        // change in widht and height, rn we need to Load Everytime, which is
+        // wasteful as shit we can even print something to check if we're
+        // getting new texture id's all the time problably yeah
         //
-        // example: UpdateTextureRec(tex, CLITERAL(Rectangle){0, 0, image.width, image.height}, image.data);
+        // example: UpdateTextureRec(tex, CLITERAL(Rectangle){0, 0, image.width,
+        // image.height}, image.data);
         //
 
-
-        if (mouse_pos.x > GetScreenWidth()/1.4) {
-           draw_file_list = false;
+        if (mouse_pos.x > GetScreenWidth() / 1.4) {
+            draw_file_list = false;
         }
-        #if defined(SOFTWARE_RENDERER)
-            tex = LoadTextureFromImage(image);
-            SetTraceLogLevel(LOG_ERROR);
-            // Draw video texture
-            if (mouse_pos.x < 20) {
-                DrawTextureEx(tex, CLITERAL(Vector2){GetScreenWidth()*0.5, GetScreenHeight()*0.5-(tex.height)}, 0, 0.5, RAYWHITE);
-                draw_file_list = true;
-            } else {
-                DrawTexture(tex, 0, 0, RAYWHITE);
-            }
-        #else
-            DrawTextureRec(mpv_texture.texture,
-                           CLITERAL(Rectangle){0, 0, (float)mpv_texture.texture.width, (float)mpv_texture.texture.height},
-                           CLITERAL(Vector2){0, 0}, WHITE);
-        #endif
-
-
-
+#if defined(SOFTWARE_RENDERER)
+        tex = LoadTextureFromImage(image);
+        // Draw video texture
+        if (mouse_pos.x < 20) {
+            DrawTextureEx(
+                tex,
+                CLITERAL(Vector2){GetScreenWidth() * 0.5,
+                                  GetScreenHeight() * 0.5 - (tex.height)},
+                0, 0.5, RAYWHITE);
+            draw_file_list = true;
+        } else {
+            DrawTexture(tex, 0, 0, RAYWHITE);
+        }
+#else
+        DrawTextureRec(
+            mpv_texture.texture,
+            CLITERAL(Rectangle){0, 0, (float)mpv_texture.texture.width,
+                                (float)mpv_texture.texture.height},
+            CLITERAL(Vector2){0, 0}, WHITE);
+#endif
 
         if (draw_file_list) {
-
             // Maybe considere SDF
             // https://www.raylib.com/examples/text/loader.html?name=text_font_sdf
 
-            const int   spacing = 0;
+            const int spacing = 0;
             // const Font  font = GetFontDefault();
-            const Font  font       = jetbrains;
-            const float font_size  = FONT_SIZE;
+            const Font font = jetbrains;
+            const float font_size = FONT_SIZE;
             Color font_color = RED;
 
+            for (int i = 0; i < mp4files.count; ++i) {
+                Vector2 text_pos = {0, i * font_size};
+                const char *file_path = mp4files.paths[i];
 
-            for (int i = 0; i < mp4files.count ; ++i) {
-                Vector2 text_pos = {0, i*font_size};
-                const char* file_path = mp4files.paths[i];
-
-                if (i >= (FILES_LISTING_LIMIT/2)) {
+                if (i >= (FILES_LISTING_LIMIT / 2)) {
                     SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
                     font_color = MAROON;
                 } else {
                 }
-                // RLAPI void DrawTextEx(Font font, const char *text, Vector2 position, float fontSize, float spacing, Color tint); // Draw text using font and additional parameters
-                DrawTextEx(font, file_path, text_pos, font_size, spacing, font_color);
-                Vector2 text_size = MeasureTextEx(font, file_path, font_size, spacing);
-                //TRACELOG(LOG_INFO, "Mouse position = %d,%d", (int)mouse_pos.x, (int)mouse_pos.y);
-                Rectangle text_rect = {text_pos.x, text_pos.y, text_size.x, text_size.y};
+                // RLAPI void DrawTextEx(Font font, const char *text, Vector2
+                // position, float fontSize, float spacing, Color tint); // Draw
+                // text using font and additional parameters
+                DrawTextEx(font, file_path, text_pos, font_size, spacing,
+                           font_color);
+                Vector2 text_size =
+                    MeasureTextEx(font, file_path, font_size, spacing);
+                // TRACELOG(LOG_INFO, "Mouse position = %d,%d",
+                // (int)mouse_pos.x, (int)mouse_pos.y);
+                Rectangle text_rect = {text_pos.x, text_pos.y, text_size.x,
+                                       text_size.y};
                 // Check if point is inside rectangle
-                //printf("text_size = {%d %d};\n", (int)text_size.x, (int)text_size.y);
+                // printf("text_size = {%d %d};\n", (int)text_size.x,
+                // (int)text_size.y);
                 if (CheckCollisionPointRec(mouse_pos, text_rect)) {
-                    DrawTextEx(font, file_path, text_pos, font_size, spacing, BLUE);
+                    DrawTextEx(font, file_path, text_pos, font_size, spacing,
+                               BLUE);
                     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                         player_load_file(mpv, file_path);
                     }
                 }
-
-
             }
         }
 
-        TraceLog(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_pos.x, (int)mouse_pos.y);
-
-
+        TraceLog(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_pos.x,
+                 (int)mouse_pos.y);
 
         DrawCircle((int)mouse_pos.x, (int)mouse_pos.y, 4, RED);
 
         snprintf(fps, sizeof(fps), " %d fps", GetFPS());
         SetWindowTitle(fps);
 
-        DrawTexture(progress_bar_render_texture.texture, 0, 0, WHITE);
-
         // TraceLog(LOG_NONE, "FPS:%d; Target_FPS=%d",GetFPS(), FPS);
 
         // Draw progress bar background
         {
+            Rectangle playback_rect = {0,
+                                       GetScreenHeight() - PROGRESS_BAR_HEIGHT,
+                                       GetScreenWidth(), 40};
 
+            int playback_current_x =
+                (int)((double)playback_rect.width) * (percent_position / 100);
+            DrawRectangle(playback_rect.x, playback_rect.y, playback_rect.width,
+                          playback_rect.height, BLACK);
 
-            Rectangle playback_rect = {0, GetScreenHeight() - PROGRESS_BAR_HEIGHT, GetScreenWidth(), 40};
-
-            int playback_current_x = (int)((double)playback_rect.width)*(percent_position/100);
-            DrawRectangle(playback_rect.x, playback_rect.y, playback_rect.width, playback_rect.height, BLACK);
-
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse_pos, playback_rect)) {
-                double new_playback_percentage = (double) (mouse_pos.x - playback_rect.x)/playback_rect.width;
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
+                (seeking || CheckCollisionPointRec(mouse_pos, playback_rect))) {
+                double new_playback_percentage =
+                    (double)(mouse_pos.x - playback_rect.x) /
+                    playback_rect.width;
                 char temp[128];
-                snprintf(temp, sizeof(temp), "%f", new_playback_percentage*100);
+                snprintf(temp, sizeof(temp), "%f",
+                         new_playback_percentage * 100);
                 // const char *cmd_seek[] = {"seek", "10%","absolute", NULL};
-                const char *cmd_seek[] = {"seek", temp, "absolute-percent", "exact", NULL};
-                printf("seek %s absolute\n", temp);
-
+                const char *cmd_seek[] = {"seek", temp, "absolute-percent",
+                                          "exact", NULL};
+                TraceLog(LOG_INFO, "seek %s absolute\n", temp);
+                seeking = true;
                 bool sync = false;
                 if (sync) {
                     mpv_command(mpv, cmd_seek);
@@ -908,6 +956,8 @@ int main(int argc, char *argv[]) {
                     mpv_command_async(mpv, 420, cmd_seek);
                 }
 
+            } else {
+                seeking = false;
             }
 
             // Merge overlapping segments
@@ -915,36 +965,66 @@ int main(int argc, char *argv[]) {
 
             // Draw watched segments
 
-            if (duration > 0) {
-                for (int i = 0; i < segment_count; i++) {
-                    int start_x = playback_rect.x + (watched_segments[i].start / duration) * playback_rect.width;
-                    int end_x = playback_rect.x + (watched_segments[i].end / duration) * playback_rect.width;
-                    DrawRectangle(start_x, playback_rect.y, end_x - start_x, PROGRESS_BAR_HEIGHT, BLUE);
+            if (sc.duration > 0) {
+                for (int i = 0; i < sc.segment_count; i++) {
+                    int start_x = playback_rect.x +
+                                  (sc.watched_segments[i].start / sc.duration) *
+                                      playback_rect.width;
+                    int end_x = playback_rect.x +
+                                (sc.watched_segments[i].end / sc.duration) *
+                                    playback_rect.width;
+                    DrawRectangle(start_x, playback_rect.y, end_x - start_x,
+                                  PROGRESS_BAR_HEIGHT, BLUE);
                 }
+                int start_x =
+                    playback_rect.x +
+                    (sc.segment_start / sc.duration) * playback_rect.width;
+                int end_x = playback_rect.x + (sc.last_position / sc.duration) *
+                                                  playback_rect.width;
 
-                int start_x = playback_rect.x + (segment_start/ duration) * playback_rect.width;
-                int end_x = playback_rect.x + (last_position / duration) * playback_rect.width;
                 if (start_x < end_x) {
-                    DrawRectangle(start_x, playback_rect.y, end_x - start_x, PROGRESS_BAR_HEIGHT, BLUE);
+                    DrawRectangle(start_x, playback_rect.y, end_x - start_x,
+                                  PROGRESS_BAR_HEIGHT, BLUE);
                 }
             }
             // Draw current position
-            // if (duration > 0 && last_position >= 0) {
-            //     int pos_x = playback_rect.x + (last_position / duration) * playback_rect.width;
-            //     // DrawRectangle(pos_x - 2, playback_rect.y, 4, PROGRESS_BAR_HEIGHT + 10, RED);
+            // if (duration > 0 && segment_control.last_position >= 0) {
+            //     int pos_x = playback_rect.x + (segment_control.last_position
+            //     / duration) * playback_rect.width;
+            //     // DrawRectangle(pos_x - 2, playback_rect.y, 4,
+            //     PROGRESS_BAR_HEIGHT
+            //     + 10, RED);
             // }
 
-            DrawRectangle(playback_current_x, playback_rect.y, 2, playback_rect.height, RED);
+            DrawRectangle(playback_current_x, playback_rect.y, 2,
+                          playback_rect.height, RED);
+        }
 
+        {
+            const int volume_pad = 3;
+            const int volume_height = 10;
+            const int volume_width = 200;
+
+            // DrawRectangle(0, 0, 2, PROGRESS_BAR_HEIGHT/2, BLACK);
+            DrawRectangle(0, 0, ((150.0 / 100.0) * volume_width), volume_height,
+                          RED);
+            DrawRectangle(0, 0, ((120.0 / 100.0) * volume_width), volume_height,
+                          YELLOW);
+            DrawRectangle(0, 0, ((100.0 / 100.0) * volume_width), volume_height,
+                          BLACK);
+            DrawRectangle(volume_pad, volume_pad,
+                          ((volume / 100.0) * volume_width) - 2 * volume_pad,
+                          (volume_height - 2 * volume_pad), GREEN);
         }
         EndDrawing();
     }
 
 done:
     // Add final segment
-    if (segment_start >= 0 && last_position >= 0) {
-        add_watched_segment(segment_start, last_position);
-    }
+
+    double start = sc.segment_start, end = sc.last_position;
+
+    add_watched_segment(start, end);
 
     // Merge overlapping segments
     merge_segments();
@@ -952,30 +1032,37 @@ done:
     collect_file_progress_info();
     reset_segments_info();
 
-    for (int i = 0; i < arrlen(file_progress_darray); i++) {
+    print_all_file_progress();
 
-        printf("File: %s\n", file_progress_darray[i].filename);
-        printf("Segments:\n");
-        for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
-            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start, file_progress_darray[i].segments[j].end);
-        }
-        printf("\n");
-    }
+    store_progress_data(FILE_PROGRESS, file_progress_darray,
+                        arrlen(file_progress_darray));
 
-    store_progress_data(FILE_PROGRESS, file_progress_darray, arrlen(file_progress_darray));
-    // Destroy the GL renderer and all of the GL objects it allocated. If video
-    // is still running, the video track will be deselected.
+    // TODO: Destroy all threads here
+    pthread_rwlock_destroy(sc.rwlock);
 
-    #ifdef SOFTWARE_RENDERER
+// Destroy the GL renderer and all of the GL objects it allocated. If video
+// is still running, the video track will be deselected.
+#ifdef SOFTWARE_RENDERER
     mpv_render_context_free(mpv_rd);
-    #else
+#else
     mpv_render_context_free(mpv_gl);
-    #endif
+#endif
 
     mpv_destroy(mpv);
-
 
     printf("properly terminated\n");
     return 0;
 }
 
+void print_all_file_progress() {
+    printf("TOTAL: %ld\n", arrlen(file_progress_darray));
+    for (int i = 0; i < arrlen(file_progress_darray); i++) {
+        printf("File: %s\n", file_progress_darray[i].filename);
+        printf("Segments:\n");
+        for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
+            printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start,
+                   file_progress_darray[i].segments[j].end);
+        }
+        printf("\n");
+    }
+}

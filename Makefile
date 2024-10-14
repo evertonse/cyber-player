@@ -14,7 +14,7 @@ run: build
 MINGW_CODE_DIR := /mnt/c/msys64/home/Administrator/code/unamed-video
 
 sync:
-	rsync -av . $(MINGW_CODE_DIR)
+	rsync --exclude=".*.bin|.*.out|./nob" -av . $(MINGW_CODE_DIR)
 
 
 
