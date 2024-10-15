@@ -31,6 +31,9 @@
 #include <mpv/render.h>
 #include <mpv/render_gl.h>
 #include <pthread.h>
+
+#define RAYGUI_IMPLEMENTATION
+#include <raygui.h>
 #include <raylib.h>
 #include <raymath.h>
 #include <rlgl.h>
@@ -68,7 +71,6 @@
 #define pthread_rwlock_unlock(lock)
 #define pthread_rwlock_wrlock(lock)
 
-
 void *glfwGetProcAddress(const char *procname);
 static void *get_proc_address_mpv(void *ctx, const char *name) {
     rlLoadExtensions(glfwGetProcAddress);
@@ -99,38 +101,61 @@ static struct {
 
 void add_watched_segment(double start, double end) {
     if (!(start >= 0 && end >= 0)) {
-        TRACE(LOG_ERROR, "%s start (%f) or end (%f)is negative", __PRETTY_FUNCTION__,
-                  start, end);
+        TRACE(LOG_ERROR, "%s start (%f) or end (%f)is negative",
+              __PRETTY_FUNCTION__, start, end);
         return;
     }
     if (end < start) {
-        TRACE(LOG_ERROR, "%s end (%f) is  bigger than start", __PRETTY_FUNCTION__, end, start);
+        TRACE(LOG_ERROR, "%s end (%f) is  bigger than start",
+              __PRETTY_FUNCTION__, end, start);
         return;
     }
 
     if (sc.segment_count > MAX_SEGMENTS) {
-        TraceLog(LOG_WARNING,
-                 "Darn too many danm segments (%d of max expected %d",
-                 sc.segment_count, MAX_SEGMENTS);
+        TRACE(LOG_WARNING, "Darn too many danm segments (%d of max expected %d",
+              sc.segment_count, MAX_SEGMENTS);
     }
     arrput(sc.watched_segments, (CLITERAL(Segment){start, end}));
     sc.segment_count = arrlen(sc.watched_segments);
 }
 
+int compare_segments(const void *a, const void *b) {
+    const Segment *seg_a = (const Segment *)a;
+    const Segment *seg_b = (const Segment *)b;
+    if (seg_a->start < seg_b->start) {
+        return -1;
+    } else if (seg_a->start > seg_b->start) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+Segment *merge_segments_with_args(Segment *segments, size_t num_segments) {
+    // Sort the segments by start time
+    qsort(segments, num_segments, sizeof(Segment), compare_segments);
+
+    size_t write = 0;
+    for (size_t read = 0; read < num_segments; read++) {
+        if (write == 0 || segments[read].start > segments[write - 1].end) {
+            segments[write++] = segments[read];
+        } else {
+            segments[write - 1].end =
+                fmax(segments[write - 1].end, segments[read].end);
+        }
+    }
+
+    // Truncate the array to the new size
+    arrsetlen(segments, write);
+    return segments;
+}
+
 void merge_segments() {
     if (sc.segment_count <= 1) return;
 
-    int i, j;
-    for (i = 0, j = 1; j < sc.segment_count; j++) {
-        if (sc.watched_segments[i].end >= sc.watched_segments[j].start) {
-            sc.watched_segments[i].end =
-                fmax(sc.watched_segments[i].end, sc.watched_segments[j].end);
-        } else {
-            i++;
-            sc.watched_segments[i] = sc.watched_segments[j];
-        }
-    }
-    sc.segment_count = i + 1;
+    sc.watched_segments =
+        merge_segments_with_args(sc.watched_segments, sc.segment_count);
+    sc.segment_count = arrlen(sc.watched_segments);
 }
 
 // #define NOB_IMPLEMENTATION
@@ -166,6 +191,7 @@ void collect_file_progress_info(void) {
 
     add_watched_segment(start, last_position);
 
+    merge_segments();
 
     char buffer[PATH_MAX];
     // Assuming it's null terminated
@@ -185,7 +211,7 @@ void collect_file_progress_info(void) {
     }
     file_progress_darray[fp_index].segments = sc.watched_segments;
     file_progress_darray[fp_index].segment_count = arrlen(sc.watched_segments);
-
+    file_progress_darray[fp_index].volume = volume;
 }
 
 void reset_segments_info(void) {
@@ -202,8 +228,14 @@ void player_unpause(void *ctx) {
     mpv_command_async(ctx, 0, cmd);
 }
 
+void player_set_volume(void *ctx, double volume) {
+    // const char *cmd[] = {"set_property", "volume", "50", NULL};
+    // mpv_command_async(ctx, 0, cmd);
+    mpv_set_property_async(ctx, 69, "volume", MPV_FORMAT_DOUBLE, &volume);
+}
+
+// const char *cmd[] = {"pause", NULL};
 void player_pause(void *ctx) {
-    // const char *cmd[] = {"pause", NULL};
     const char *cmd[] = {"set", "pause", "yes", NULL};
     mpv_command_async(ctx, 0, cmd);
 }
@@ -215,6 +247,7 @@ void player_load_file(void *ctx, const char *file_path) {
 
     const char *cmd[] = {"loadfile", file_path, NULL};
     currently_playing_path = file_path;
+    volume = 50;
     mpv_command_async(ctx, 0, cmd);
 
     reset_segments_info();
@@ -234,21 +267,23 @@ void player_load_file(void *ctx, const char *file_path) {
 
     if (index != HASH_DOES_NOT_EXIST) {
         FileProgress fp = file_progress_darray[index];
-        printf("\nfpcount:%ld\n", fp.segment_count);
+        printf("\nfpcount:%d\n", fp.segment_count);
         for (int i = 0; i < fp.segment_count; ++i) {
             Segment s = fp.segments[i];
             printf("\nfpstart:%f | fpend:%f\n", fp.segments[i].start,
                    fp.segments[i].end);
             add_watched_segment(s.start, s.end);
         }
+        volume = fp.volume;
     }
 
-    printf("\n len of watched:%d\n", arrlen(sc.watched_segments));
+    printf("\n len of watched:%ld\n", arrlen(sc.watched_segments));
     for (int i = 0; i < arrlen(sc.watched_segments); ++i) {
         printf("\nstart:%f | end:%f\n", sc.watched_segments[i].start,
                sc.watched_segments[i].end);
     }
 
+    player_set_volume(ctx, volume);
     player_unpause(ctx);
 }
 
@@ -307,7 +342,7 @@ static void on_property_change(mpv_event_property *prop) {
 
     if (prop == NULL) return;
 
-    TraceLog(LOG_INFO, "on_property_change event->name=%s", prop->name);
+    TRACE(LOG_INFO, "on_property_change event->name=%s", prop->name);
     static int last_time = 0;
     if (strcmp(prop->name, "percent-pos") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
@@ -315,7 +350,7 @@ static void on_property_change(mpv_event_property *prop) {
             arrput(percent_positions, percent_position);
 
             double time_position = *(double *)prop->data;
-            TraceLog(LOG_INFO, "percent-pos:%.2f%%\n", percent_position);
+            TRACE(LOG_INFO, "percent-pos:%.2f%%\n", percent_position);
         }
     }
 
@@ -323,14 +358,14 @@ static void on_property_change(mpv_event_property *prop) {
         assert(prop->format == MPV_FORMAT_FLAG);
 
         sc.paused = *(bool *)prop->data;
-        TraceLog(LOG_ERROR, "Current %s: %s\n", prop->name,
-                 sc.paused ? "true" : "false");
+        TRACE(LOG_ERROR, "Current %s: %s\n", prop->name,
+              sc.paused ? "true" : "false");
     }
 
     if (strcmp(prop->name, "volume") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             volume = *(double *)prop->data;
-            TraceLog(LOG_INFO, "Current %s: %.2f\n", prop->name, volume);
+            TRACE(LOG_INFO, "Current %s: %.2f\n", prop->name, volume);
         }
     }
 
@@ -343,7 +378,7 @@ static void on_property_change(mpv_event_property *prop) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             double playback_time = *(double *)prop->data;
             double time_position = playback_time;
-            TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, playback_time);
+            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, playback_time);
 
             double start = sc.segment_start, last_position = sc.last_position;
             bool paused = sc.paused;
@@ -374,14 +409,14 @@ playback_time_done:
         if (prop->format == MPV_FORMAT_INT64) {
             int64_t osd_dimensions = *(int64_t *)prop->data;
             assert(MPV_FORMAT_INT64 == prop->format);
-            TraceLog(LOG_INFO, "Current %s: %ld\n", prop->name, osd_dimensions);
+            TRACE(LOG_INFO, "Current %s: %ld\n", prop->name, osd_dimensions);
         }
     }
 
     if (strcmp(prop->name, "duration") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             sc.duration = *(double *)prop->data;
-            TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, sc.duration);
+            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, sc.duration);
         }
         // assert(0);
     }
@@ -389,7 +424,7 @@ playback_time_done:
     if (strcmp(prop->name, "time-pos") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             double time_position = *(double *)prop->data;
-            TraceLog(LOG_INFO, "Current %s: %f\n", prop->name, time_position);
+            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, time_position);
             // if (segment_control.last_position < 0) {
             //     segment_start = time_position;
             // } else if (time_position - segment_control.last_position > 1.0) {
@@ -437,7 +472,7 @@ static void handle_mpv_events(mpv_handle *mpv) {
     times_called += 1;
     while (mpv) {
         mpv_event *mp_event = mpv_wait_event(mpv, 0.0);
-        // TraceLog(LOG_ERROR, "times_called:%d event:%s\n", times_called,
+        // TRACE(LOG_ERROR, "times_called:%d event:%s\n", times_called,
         // mpv_event_name(mp_event->event_id));
 
         if (mp_event == NULL || mp_event->event_id == MPV_EVENT_NONE) break;
@@ -459,9 +494,9 @@ static void handle_mpv_events(mpv_handle *mpv) {
          */
 
         if (mp_event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            TraceLog(LOG_INFO, "uint64_t reply_userdata = %ld;\n",
-                     mp_event->reply_userdata);
-            TraceLog(LOG_INFO, "uint64_t error = %d;\n", mp_event->error);
+            TRACE(LOG_INFO, "uint64_t reply_userdata = %ld;\n",
+                  mp_event->reply_userdata);
+            TRACE(LOG_INFO, "uint64_t error = %d;\n", mp_event->error);
 
             mpv_event_property *prop = mp_event->data;
             on_property_change(prop);
@@ -499,7 +534,7 @@ int main(int argc, char *argv[]) {
     shdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
 
     int len = load_progress_data(FILE_PROGRESS, &file_progress_darray);
-    TraceLog(LOG_INFO, "len = %d\n", len);
+    TRACE(LOG_INFO, "len = %d\n", len);
     for (int i = 0; i < arrlen(file_progress_darray); i++) {
         printf("File: %s\n", file_progress_darray[i].filename);
         printf("Segments:\n");
@@ -545,7 +580,7 @@ int main(int argc, char *argv[]) {
 
     // Some minor options can only be set before mpv_initialize().
     if (mpv_initialize(mpv) < 0) die("mpv init failed");
-    TraceLog(LOG_INFO, "MPV initialized with success");
+    TRACE(LOG_INFO, "MPV initialized with success");
     // get length
 
     // set mpv options
@@ -630,8 +665,7 @@ int main(int argc, char *argv[]) {
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT);
 
-    TraceLog(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(),
-             GetScreenHeight());
+    TRACE(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(), GetScreenHeight());
 
 #if defined(SOFTWARE_RENDERER)
 
@@ -705,8 +739,8 @@ int main(int argc, char *argv[]) {
     // if (stat(filename, &statbuf) == 0) result = true;
 
     if (!nob_file_exists(argv[1]) || !FileExists(argv[1])) {
-        TraceLog(LOG_ERROR, "File %s does not exist, nothing is being played",
-                 argv[1]);
+        TRACE(LOG_ERROR, "File %s does not exist, nothing is being played",
+              argv[1]);
     } else {
         percent_positions = NULL;
         arrsetlen(percent_positions, 0);
@@ -737,8 +771,8 @@ int main(int argc, char *argv[]) {
 
         Vector2 mouse_pos = GetMousePosition();
         Vector2 mouse_wheel = GetMouseWheelMoveV();
-        TraceLog(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
-                 mouse_wheel.y);
+        TRACE(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
+              mouse_wheel.y);
 
         if (IsKeyPressedOrRepeat(KEY_LEFT)) {
             const char *mpv_cmd[] = {"seek", "-5", "relative", "keyframes",
@@ -915,24 +949,20 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        TraceLog(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_pos.x,
-                 (int)mouse_pos.y);
+        TRACE(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_pos.x,
+              (int)mouse_pos.y);
 
         DrawCircle((int)mouse_pos.x, (int)mouse_pos.y, 4, RED);
 
         snprintf(fps, sizeof(fps), " %d fps", GetFPS());
         SetWindowTitle(fps);
 
-        // TraceLog(LOG_NONE, "FPS:%d; Target_FPS=%d",GetFPS(), FPS);
+        // TRACE(LOG_NONE, "FPS:%d; Target_FPS=%d",GetFPS(), FPS);
 
         // Draw progress bar background
         {
-            Rectangle playback_rect = {0,
-                                       GetScreenHeight() - PROGRESS_BAR_HEIGHT,
-                                       GetScreenWidth(), 40};
-
-            int playback_current_x =
-                (int)((double)playback_rect.width) * (percent_position / 100);
+            Rectangle playback_rect = {0, GetScreenHeight() - PROGRESS_BAR_HEIGHT, GetScreenWidth(), 40};
+            int playback_current_x = (int)((double)playback_rect.width) * (percent_position / 100);
             DrawRectangle(playback_rect.x, playback_rect.y, playback_rect.width,
                           playback_rect.height, BLACK);
 
@@ -947,7 +977,7 @@ int main(int argc, char *argv[]) {
                 // const char *cmd_seek[] = {"seek", "10%","absolute", NULL};
                 const char *cmd_seek[] = {"seek", temp, "absolute-percent",
                                           "exact", NULL};
-                TraceLog(LOG_INFO, "seek %s absolute\n", temp);
+                TRACE(LOG_INFO, "seek %s absolute\n", temp);
                 seeking = true;
                 bool sync = false;
                 if (sync) {
@@ -1025,10 +1055,6 @@ done:
     double start = sc.segment_start, end = sc.last_position;
 
     add_watched_segment(start, end);
-
-    // Merge overlapping segments
-    merge_segments();
-
     collect_file_progress_info();
     reset_segments_info();
 
@@ -1057,7 +1083,8 @@ done:
 void print_all_file_progress() {
     printf("TOTAL: %ld\n", arrlen(file_progress_darray));
     for (int i = 0; i < arrlen(file_progress_darray); i++) {
-        printf("File: %s\n", file_progress_darray[i].filename);
+        printf("File: %s volume:\n", file_progress_darray[i].filename);
+        printf("Volume: %f\n", file_progress_darray[i].volume);
         printf("Segments:\n");
         for (int j = 0; j < file_progress_darray[i].segment_count; j++) {
             printf("  %.2f - %.2f\n", file_progress_darray[i].segments[j].start,

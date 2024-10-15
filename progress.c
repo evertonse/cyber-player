@@ -53,6 +53,9 @@ void store_progress_data(const char* filename, FileProgress* progress_array, int
         fwrite(&filename_length, sizeof(uint16_t), 1, file);
         fwrite(escaped_filename, sizeof(char), filename_length, file);
 
+        // Write volume
+        fwrite(&progress_array[i].volume, sizeof(progress_array[i].volume), 1, file);
+
         // Write the number of segments
         fwrite(&progress_array[i].segment_count, sizeof(int), 1, file);
 
@@ -99,8 +102,10 @@ int load_progress_data(const char* filename, FileProgress** progress_array) {
         escaped_filename[filename_length] = '\0';
         unescape_filename(escaped_filename, (*progress_array)[i].filename, MAX_FILENAME_LENGTH);
 
-        // Read the number of segments
+        // Read the volume
+        fread(&(*progress_array)[i].volume, sizeof((*progress_array)[i].volume), 1, file);
 
+        // Read the number of segments
         fread(&(*progress_array)[i].segment_count, sizeof(int), 1, file);
 
         Segment* segments = malloc((*progress_array)[i].segment_count * sizeof(Segment));

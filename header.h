@@ -7,6 +7,15 @@
 
 #define MAX_FILENAME_LENGTH 1024
 
+void player_unpause(void *ctx);
+
+void player_set_volume(void *ctx, double volume);
+
+void player_pause(void *ctx);
+
+void player_load_file(void *ctx, const char *file_path);
+
+
 typedef struct {
     double start;
     double end;
@@ -16,6 +25,7 @@ typedef struct {
     char filename[MAX_FILENAME_LENGTH];
     Segment* segments;
     int segment_count;
+    double volume;
 } FileProgress;
 
 

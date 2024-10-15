@@ -8,6 +8,9 @@ nob.exe
 .last_yank.txt
 .trails
 .bin/
-.png
-.out
-.log
+.build/
+*.png
+*.out
+a.out
+*.log
+examples/raylib/

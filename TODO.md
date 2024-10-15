@@ -1,5 +1,11 @@
 
-Check if currently is paused, and if it do something I forgot why
-If we click on the bar to jump we sohuld reset the segments variables
+DONE: Check if currently is paused, and if it do something I forgot why
 
-Check if we currently clicking
+DONE: If we click on the bar to jump we sohuld reset the segments variables
+
+DONE: Check if we currently clicking
+
+check if merge segments is actually correct
+
+TODO: Checkout Raygui
+

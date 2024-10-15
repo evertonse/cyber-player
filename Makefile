@@ -13,8 +13,10 @@ run: build
 
 MINGW_CODE_DIR := /mnt/c/msys64/home/Administrator/code/unamed-video
 
+# https://linuxize.com/post/how-to-exclude-files-and-directories-with-rsync/
 sync:
-	rsync --exclude=".*.bin|.*.out|./nob" -av . $(MINGW_CODE_DIR)
+	rsync --exclude '.git' --exclude '.build' -av \
+	. $(MINGW_CODE_DIR)
 
 
 
@@ -50,9 +52,19 @@ SOURCES := sr.c
 
 GLIB_FLAGS := -I/usr/include/glib-2.0 -I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -pthread -lglib-2.0 -lglfw3 -lopengl32
 
+# Check if ./nob file exists
+BUILD := ./nob
+ifeq ($(wildcard ./nob),)
+    $(info bootstraping first)
+    build: BUILD := gcc nob.c -o nob && ./nob
+else
+    $(info exists)
+endif
+
+
 
 build:
-	./nob &> /dev/null || gcc nob.c -o nob && ./nob
+	$(BUILD)
     
 
 mingw-run: CC=gcc
@@ -78,7 +90,6 @@ clean:
 	@echo "Cleaning up"
 	find . -type f \( -name "*.brdf" -o -name "*.o" -o -name "*.a" -o -name "*.aux" -o -name "*.svg" \) -delete
 
-# rsync -av --delete . "$(wslpath C:\msys64\home\Administrator\code)"
 
 
 .PHONY: run debug doc build clean svg test sync mingw-run mingw-ssh
