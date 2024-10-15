@@ -252,6 +252,7 @@ void player_load_file(void *ctx, const char *file_path) {
     currently_playing_path = file_path;
     volume = 50;
     mpv_command_async(ctx, 0, cmd);
+    // GuiDropdownBox()
 
     reset_segments_info();
 
@@ -619,7 +620,7 @@ int main(int argc, char *argv[]) {
     mpv_check_error(
         mpv_observe_property(mpv, 69, "duration", MPV_FORMAT_DOUBLE));
 
-#define FILES_LISTING_LIMIT 10
+#define FILES_LISTING_LIMIT 100
 
 #if defined(MINGW)
     // const char* dir =
@@ -641,29 +642,33 @@ int main(int argc, char *argv[]) {
     }
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
 
-#define FONT_SIZE (19)
+
+
+#define FONT_SIZE (40/2)
 
     Font jetbrains = LoadFontEx(
         "./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
     GenTextureMipmaps(&jetbrains.texture);
-    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
     // FILTER_TRILINEAR requires generated mipmaps
-    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
+    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
+    GuiSetFont(jetbrains);
+    GuiSetStyle(LISTVIEW, TEXT_ALIGNMENT, TEXT_ALIGN_LEFT);
+    GuiSetStyle(DEFAULT, TEXT_SIZE, FONT_SIZE);
 
     mpv_texture = LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT);
 
-    SetWindowState(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN |
-                   FLAG_WINDOW_HIGHDPI
+    SetWindowState(
+        FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | FLAG_WINDOW_HIGHDPI
+        // support mouse passthrough, only supported when
+        | FLAG_WINDOW_UNDECORATED 
+        // FLAG_WINDOW_MOUSE_PASSTHROUGH
+        | FLAG_VSYNC_HINT
 
-                   // support mouse passthrough, only supported when
-                   // FLAG_WINDOW_UNDECORATED | FLAG_WINDOW_UNDECORATED |
-                   // FLAG_WINDOW_MOUSE_PASSTHROUGH
-                   | FLAG_VSYNC_HINT
-
-                   | FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT
-                   // run program in borderless windowed mode
-                   // | FLAG_BORDERLESS_WINDOWED_MODE
+        | FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT
+        // run program in borderless windowed mode
+        // | FLAG_BORDERLESS_WINDOWED_MODE
     );
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT);
@@ -767,23 +772,28 @@ int main(int argc, char *argv[]) {
 
     void *pixels = malloc(sizeof(char) * 4 * 2000 * 2000);
     bool draw_file_list = false;
+    bool holding_crtl_click = false;
+    Vector2 holding_crtl_click_init_position = {0,0};
+
+    int scrollIndex = 0, active = 0 , focus = 0;
     while (!WindowShouldClose()) {
         BeginDrawing();
         EndTextureMode();
-        ClearBackground(RAYWHITE);
+        ClearBackground(BLACK);
 
-        Vector2 mouse_pos = GetMousePosition();
-        Vector2 mouse_wheel = GetMouseWheelMoveV();
+        Vector2 mouse_position  = GetMousePosition();
+        Vector2 mouse_wheel     = GetMouseWheelMoveV();
+        Vector2 window_size     = CLITERAL(Vector2){GetScreenWidth(), GetScreenHeight()};
+        Vector2 window_position = GetWindowPosition();
+
         TRACE(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
               mouse_wheel.y);
 
         if (IsKeyPressedOrRepeat(KEY_LEFT)) {
-            const char *mpv_cmd[] = {"seek", "-5", "relative", "keyframes",
-                                     NULL};
+            const char *mpv_cmd[] = {"seek", "-5", "relative", "keyframes", NULL};
             mpv_command_async(mpv, 1, mpv_cmd);
         } else if (IsKeyPressedOrRepeat(KEY_RIGHT)) {
-            const char *mpv_cmd[] = {"seek", "5", "relative", "keyframes",
-                                     NULL};
+            const char *mpv_cmd[] = {"seek", "5", "relative", "keyframes", NULL};
             mpv_command_async(mpv, 0, mpv_cmd);
         } else if (IsKeyPressedOrRepeat(KEY_UP)) {
             const char *mpv_cmd[] = {"osd-auto", "add", "volume", "6", NULL};
@@ -795,9 +805,27 @@ int main(int argc, char *argv[]) {
             const char *mpv_cmd[] = {"cycle", "mute", NULL};
             mpv_command_async(mpv, 0, mpv_cmd);
         } else if (IsKeyDown(KEY_LEFT_CONTROL)) {
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-                SetWindowPosition(mouse_pos.x, mouse_pos.y);
+            Vector2 diff = Vector2Subtract(mouse_position, holding_crtl_click_init_position);
+            Vector2 result_position = Vector2Add(window_position, diff);
+            if(IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                if (!holding_crtl_click) {
+                    holding_crtl_click = true;
+                    holding_crtl_click_init_position = CLITERAL(Vector2){mouse_position.x, mouse_position.y };
+                } else {
+                    SetWindowPosition(result_position.x, result_position.y);
+                }
             }
+
+            if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
+                holding_crtl_click = false;
+
+                printf("holding_crtl_click_init_position = {%f, %f}\n", holding_crtl_click_init_position.x, holding_crtl_click_init_position.y);
+                printf("curret_position = {%f, %f}\n", mouse_position.x, mouse_position.y);
+                printf("diff = {%f, %f}\n", diff.x, diff.y);
+                printf("window_position = {%f, %f}\n", window_position.x, window_position.y);
+                printf("result_position = {%f, %f}\n", result_position.x, result_position.y);
+            }
+
             if (IsKeyPressed(KEY_C)) {
                 goto done;
             }
@@ -885,13 +913,13 @@ int main(int argc, char *argv[]) {
         // image.height}, image.data);
         //
 
-        if (mouse_pos.x > GetScreenWidth() / 1.4) {
+        if (mouse_position.x > GetScreenWidth() / 1.4) {
             draw_file_list = false;
         }
 #if defined(SOFTWARE_RENDERER)
         tex = LoadTextureFromImage(image);
         // Draw video texture
-        if (mouse_pos.x < 20) {
+        if (mouse_position.x < 20) {
             DrawTextureEx(
                 tex,
                 CLITERAL(Vector2){GetScreenWidth() * 0.5,
@@ -909,7 +937,7 @@ int main(int argc, char *argv[]) {
             CLITERAL(Vector2){0, 0}, WHITE);
 #endif
 
-        if (draw_file_list) {
+        if (false /* disabled for now */&& draw_file_list) {
             // Maybe considere SDF
             // https://www.raylib.com/examples/text/loader.html?name=text_font_sdf
 
@@ -942,7 +970,7 @@ int main(int argc, char *argv[]) {
                 // Check if point is inside rectangle
                 // printf("text_size = {%d %d};\n", (int)text_size.x,
                 // (int)text_size.y);
-                if (CheckCollisionPointRec(mouse_pos, text_rect)) {
+                if (CheckCollisionPointRec(mouse_position, text_rect)) {
                     DrawTextEx(font, file_path, text_pos, font_size, spacing,
                                BLUE);
                     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -952,10 +980,10 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        TRACE(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_pos.x,
-              (int)mouse_pos.y);
+        TRACE(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_position.x,
+              (int)mouse_position.y);
 
-        DrawCircle((int)mouse_pos.x, (int)mouse_pos.y, 4, RED);
+        DrawCircle((int)mouse_position.x, (int)mouse_position.y, 4, RED);
 
         snprintf(fps, sizeof(fps), " %d fps", GetFPS());
         SetWindowTitle(fps);
@@ -970,9 +998,9 @@ int main(int argc, char *argv[]) {
                           playback_rect.height, BLACK);
 
             if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
-                (seeking || CheckCollisionPointRec(mouse_pos, playback_rect))) {
+                (seeking || CheckCollisionPointRec(mouse_position, playback_rect))) {
                 double new_playback_percentage =
-                    (double)(mouse_pos.x - playback_rect.x) /
+                    (double)(mouse_position.x - playback_rect.x) /
                     playback_rect.width;
                 char temp[128];
                 snprintf(temp, sizeof(temp), "%f",
@@ -1049,6 +1077,19 @@ int main(int argc, char *argv[]) {
                           ((volume / 100.0) * volume_width) - 2 * volume_pad,
                           (volume_height - 2 * volume_pad), GREEN);
         }
+
+        if (draw_file_list) {
+            const char **text = (const char **) mp4files.paths;
+            int active_old = active;
+            int a = GuiListViewEx(CLITERAL(Rectangle){0,0, window_size.x/2, window_size.y}, text, mp4files.count, &scrollIndex, &active, &focus);
+            if (active_old != active && active >= 0 && active < mp4files.count) {
+                player_load_file(mpv, mp4files.paths[active]);
+                draw_file_list = false;
+            }
+            assert(a == 0);
+        }
+
+        TRACE(LOG_ERROR, "scrollIndex%d, active%d, focus%d", scrollIndex, active, focus);
         EndDrawing();
     }
 

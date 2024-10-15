@@ -1,4 +1,5 @@
 ./nob
+.cache
 nob
 nob.old
 nob.exe
@@ -8,6 +9,8 @@ nob.exe
 .last_yank.txt
 .trails
 .bin/
+.bin
+*.bin
 .build/
 *.png
 *.out

@@ -40,8 +40,9 @@ static const char *raylib_modules[] = {
 #   include "dirent.h"
 #endif
 
+typedef Nob_Cmd CStr_Array;
 // Gen without the []
-void gen_compile_commands_json(String_Builder* sb, Cmd cmd) {
+void gen_compile_commands_json(String_Builder* sb, Cmd cmd, CStr_Array hfiles) {
 
     // char* out =  tprintf("%s%s\0",
     char root_dir[PATH_MAX];
@@ -55,31 +56,64 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd) {
     );
 
     struct {
-        int*items;
+        int* items;
         size_t count;
         size_t capacity;
-    } cfiles;
+    } cfiles_indices;
 
 
-    for (int i = 0; i < cmd.count; ++i) {
-        const char *comma = i == cmd.count - 1 ? "" : ",";
+
+    const char *comma = cmd.count > 0 ? "," : "";
+
+    { // Extra Defines for debug  in .h files
+        sb_append_cstr(sb, "    \"");
+        sb_append_cstr(sb, "cc");
+        sb_printf(sb, "\"%s\n", comma);
+
+        sb_append_cstr(sb, "    \"");
+        sb_append_cstr(sb, "-DNOB_STRIP_PREFIX");
+        sb_printf(sb, "\"%s\n", comma);
+
+        sb_append_cstr(sb, "    \"");
+        sb_append_cstr(sb, "-DNOB_IMPLEMENTATION");
+        sb_printf(sb, "\"%s\n", comma);
+
+        sb_append_cstr(sb, "    \"");
+        sb_append_cstr(sb, "-DRAYGUI_IMPLEMENTATION");
+        sb_printf(sb, "\"%s\n", comma);
+    }
+
+    // skip first expects compiler ( we replace with "cc")
+    for (int i = 1; i < cmd.count; ++i) {
         char *ext = strrchr(cmd.items[i], '.');
         if (ext != NULL && strcmp(ext, ".c") == 0 ) {
-            da_append(&cfiles, i);
+            da_append(&cfiles_indices, i);
         }
+
+        comma = i == cmd.count - 1 ? "" : ",";
 
         sb_append_cstr(sb, "    \"");
         sb_append_cstr(sb, cmd.items[i]);
         sb_printf(sb, "\"%s\n", comma);
     }
 
-    const char *comma = cfiles.count == 0 ? "" : ",";
+    comma = cfiles_indices.count == 0 ? "" : ",";
     // TODO: Make a more robust sb_printf not using tpritnf ok?
     sb_printf(sb, "    ]%s\n", comma);
-    for (size_t i = 0; i < cfiles.count; ++i) {
-        const char *comma = i == cfiles.count - 1 ? "" : ",";
+
+
+
+    for (size_t i = 0; i < hfiles.count; ++i) {
+        const char *comma = i == (hfiles.count + cfiles_indices.count) - 1 ? "" : ",";
+        const char* hfile = hfiles.items[i];
+        sb_printf(sb, "    \"file\": \"%s\"", hfile);
+        sb_printf(sb, "%s\n", comma);
+    }
+
+    for (size_t i = 0; i < cfiles_indices.count; ++i) {
+        const char *comma = i == cfiles_indices.count - 1 ? "" : ",";
         // char cfile[PATH_MAX]; realpath(cmd.items[cfiles.items[i]], cfile);
-        const char* cfile = cmd.items[cfiles.items[i]];
+        const char* cfile = cmd.items[cfiles_indices.items[i]];
         sb_printf(sb, "    \"file\": \"%s\"", cfile);
         sb_printf(sb, "%s\n", comma);
     }
@@ -229,18 +263,28 @@ bool build_cyber_player(const char *sources[]) {
 
     nob_log(INFO, "OK: %s", __PRETTY_FUNCTION__);
 
+
+
+
+#if !defined(__MINGW64__)
+    CStr_Array hfiles = {0};
+    da_append(&hfiles, "./src/vendor/raygui.h");
+    da_append(&hfiles, "./nob.h");
+
     String_Builder sb = {0};
     sb_append_cstr(&sb, "[\n");
-    nob_log(INFO, "`gen_compile_commands_json`");
-    gen_compile_commands_json(&sb, cmd);
+    gen_compile_commands_json(&sb, cmd, hfiles);
     sb_append_cstr(&sb, "\n]\0");
-    // sb_append_null(&sb);
 
+    nob_log(INFO, "`gen_compile_commands_json`");
+
+    // sb_append_null(&sb);
     if (write_entire_file("compile_commands.json", sb.items, sb.count)) {
         nob_log(INFO, "`compile_commands.json` generated with success");
     } else {
         nob_log(ERROR, "`compile_commands.json` could not be generated");
     }
+#endif
 
 defer:
     cmd_free(cmd);
