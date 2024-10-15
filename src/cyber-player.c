@@ -22,8 +22,10 @@
  https://stackoverflow.com/questions/45124869/cross-platform-alternative-to-this-realpath-definition
 */
 #if defined(_WIN32) && defined(__MINGW64__)
-#include "dirent.h"
-#define realpath(N, R) _fullpath((R), (N), PATH_MAX)
+// #   include "dirent.h" // Conflicts with defined in nob.h only in mingw
+#   define realpath(N, R) _fullpath((R), (N), PATH_MAX)
+#else
+#   include "dirent.h"
 #endif
 
 #include <math.h>
@@ -43,9 +45,11 @@
 
 #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wno-padded"
+#define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
-#include "./nob.h"
+#include "nob.h"
 #pragma clang diagnostic pop
+
 
 #define STB_DS_IMPLEMENTATION
 #include "stb_ds.h"
@@ -55,7 +59,6 @@
 #define HASH_DOES_NOT_EXIST (-1)
 #define FILE_PROGRESS "progress.bin"
 
-#include <dirent.h>
 
 #include "raylib.h"
 // #include "rcore.h"

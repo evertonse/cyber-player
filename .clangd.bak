@@ -2,13 +2,20 @@ CompileFlags:
   Add:
     - -D__MINGW64__
     - -D__MINGW32__
-    # - -std=c11
+    - -std=c11
     - -DNOB_IMPLEMENTATION
+    - -DNOB_STRIP_PREFIX
     - -DSOFTWARE_RENDERER
+    - -I.
     - -I/usr/include/mpv
     - -I/usr/local/include
     - -Ivendor
     - -I/usr/include/glib-2.0
+    - -Isrc/
+    - -Isrc/include/
+    - -I./src/include
+    - -I./src/vendor/
+    - -I./src/vendor/raylib/src/
     - -I/usr/lib/glib-2.0/include
     - -I/usr/include/sysprof-6
     - -I/usr/include/SDL2

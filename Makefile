@@ -15,6 +15,10 @@ MINGW_CODE_DIR := /mnt/c/msys64/home/Administrator/code/unamed-video
 
 # https://linuxize.com/post/how-to-exclude-files-and-directories-with-rsync/
 sync:
+	rsync --exclude 'examples/' --exclude 'src/vendor/' --exclude '.git' --exclude '.build' -av \
+	. $(MINGW_CODE_DIR)
+
+sync-full:
 	rsync --exclude '.git' --exclude '.build' -av \
 	. $(MINGW_CODE_DIR)
 

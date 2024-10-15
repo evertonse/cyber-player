@@ -9,6 +9,7 @@
 #include <libgen.h>
 
 #define NOB_IMPLEMENTATION
+#define NOB_STRIP_PREFIX
 #include "./nob.h"
 
 #define BUILD_DIR ".build"
@@ -31,128 +32,219 @@ static const char *raylib_modules[] = {
     "rshapes", "rtext",  "rtextures", "utils",
 };
 
+
+#if defined(_WIN32) && defined(__MINGW64__)
+// #   include "dirent.h" // Conflicts with defined in nob.h only in mingw
+#   define realpath(N, R) _fullpath((R), (N), PATH_MAX)
+#else
+#   include "dirent.h"
+#endif
+
+// Gen without the []
+void gen_compile_commands_json(String_Builder* sb, Cmd cmd) {
+
+    // char* out =  tprintf("%s%s\0",
+    char root_dir[PATH_MAX];
+    realpath("./", root_dir);
+
+    sb_printf(sb,
+        "  {\n"
+        "    \"directory\": \"%s\",\n"
+        "    \"arguments\": [\n" ,
+                root_dir
+    );
+
+    struct {
+        int*items;
+        size_t count;
+        size_t capacity;
+    } cfiles;
+
+
+    for (int i = 0; i < cmd.count; ++i) {
+        const char *comma = i == cmd.count - 1 ? "" : ",";
+        char *ext = strrchr(cmd.items[i], '.');
+        if (ext != NULL && strcmp(ext, ".c") == 0 ) {
+            da_append(&cfiles, i);
+        }
+
+        sb_append_cstr(sb, "    \"");
+        sb_append_cstr(sb, cmd.items[i]);
+        sb_printf(sb, "\"%s\n", comma);
+    }
+
+    const char *comma = cfiles.count == 0 ? "" : ",";
+    // TODO: Make a more robust sb_printf not using tpritnf ok?
+    sb_printf(sb, "    ]%s\n", comma);
+    for (size_t i = 0; i < cfiles.count; ++i) {
+        const char *comma = i == cfiles.count - 1 ? "" : ",";
+        // char cfile[PATH_MAX]; realpath(cmd.items[cfiles.items[i]], cfile);
+        const char* cfile = cmd.items[cfiles.items[i]];
+        sb_printf(sb, "    \"file\": \"%s\"", cfile);
+        sb_printf(sb, "%s\n", comma);
+    }
+    sb_append_cstr(sb, "  }\n");
+
+
+
+// "   \"cc\",\n"
+// "   \"-c\",\n"
+// "   \"-std=c99\",\n"
+// "   \"-pedantic\",\n"
+// "   \"-Wall\",\n"
+// "   \"-Wno-unused-function\",\n"
+// "   \"-Wno-deprecated-declarations\",\n"
+// "   \"-Os\",\n"
+// "   \"-I/usr/X11R6/include\",\n"
+// "   \"-I/usr/include/freetype2\",\n"
+// "   \"-D_DEFAULT_SOURCE\",\n"
+// "   \"-D_BSD_SOURCE\",\n"
+// "   \"-D_XOPEN_SOURCE=700L\",\n"
+// "   \"-DVERSION=\\"6.4\"",\n"
+// "   \"-DXINERAMA\",\n"
+// "   \"util.c\"\n"
+
+
+
+}
+
 bool build_raylib() {
     bool result = true;
-    Nob_Cmd cmd = {0};
-    Nob_File_Paths object_files = {0};
+    Cmd cmd = {0};
+    File_Paths object_files = {0};
 
     const char *build_path = RAYLIB_BUILD_DIR;
 
-    if (!nob_mkdir_if_not_exists(build_path)) {
-        nob_return_defer(false);
+    if (!mkdir_if_not_exists(build_path)) {
+        return_defer(false);
     }
 
-    Nob_Procs procs = {0};
+    Procs procs = {0};
 
-    for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
+    for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
         const char *input_path =
-            nob_temp_sprintf("./vendor/raylib/src/%s.c", raylib_modules[i]);
+            temp_sprintf("./src/vendor/raylib/src/%s.c", raylib_modules[i]);
         const char *output_path =
-            nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+            temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
         output_path =
-            nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+            temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
 
-        nob_da_append(&object_files, output_path);
+        da_append(&object_files, output_path);
 
-        if (nob_needs_rebuild(output_path, &input_path, 1)) {
+        if (needs_rebuild(output_path, &input_path, 1)) {
             cmd.count = 0;
-            nob_cmd_append(&cmd, CC);
-            nob_cmd_append(&cmd, /* "-ggdb", */ "-DPLATFORM_DESKTOP", "-fPIC",
+            cmd_append(&cmd, CC);
+            cmd_append(&cmd, /* "-ggdb", */ "-DPLATFORM_DESKTOP", "-fPIC",
                            "-DSUPPORT_FILEFORMAT_FLAC=1");
 #if !defined(__MINGW64__)
-            nob_cmd_append(&cmd, "-D_GLFW_X11");
+            cmd_append(&cmd, "-D_GLFW_X11");
 #else
 #endif
 
-            nob_cmd_append(&cmd, "-I./vendor/raylib/src/external/glfw/include");
+            cmd_append(&cmd, "-I./vendor/raylib/src/external/glfw/include");
 
-            nob_cmd_append(&cmd, "-c", input_path);
-            nob_cmd_append(&cmd, "-o", output_path);
+            cmd_append(&cmd, "-c", input_path);
+            cmd_append(&cmd, "-o", output_path);
 
-            Nob_Proc proc = nob_cmd_run_async(cmd);
-            nob_da_append(&procs, proc);
+            Proc proc = cmd_run_async(cmd);
+            da_append(&procs, proc);
         }
     }
 
     cmd.count = 0;
 
-    if (!nob_procs_wait(procs)) nob_return_defer(false);
+    if (!procs_wait(procs)) return_defer(false);
 
-    nob_log(NOB_INFO, "OK: waited procs %s", __PRETTY_FUNCTION__);
+    nob_log(INFO, "OK: waited procs %s", __PRETTY_FUNCTION__);
 
-    const char *libraylib_path = nob_temp_sprintf("%s/libraylib.a", build_path);
+    const char *libraylib_path = temp_sprintf("%s/libraylib.a", build_path);
 
-    if (nob_needs_rebuild(libraylib_path, object_files.items,
+    if (needs_rebuild(libraylib_path, object_files.items,
                           object_files.count)) {
-        nob_cmd_append(&cmd, AR, "-crs", libraylib_path);
-        for (size_t i = 0; i < NOB_ARRAY_LEN(raylib_modules); ++i) {
+        cmd_append(&cmd, AR, "-crs", libraylib_path);
+        for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
             const char *input_path =
-                nob_temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
-            nob_cmd_append(&cmd, input_path);
+                temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+            cmd_append(&cmd, input_path);
         }
-        if (!nob_cmd_run_sync(cmd)) nob_return_defer(false);
+        if (!cmd_run_sync(cmd)) return_defer(false);
     }
-    nob_log(NOB_INFO, "OK: create AR %s", __PRETTY_FUNCTION__);
+    nob_log(INFO, "OK: create AR %s", __PRETTY_FUNCTION__);
 
 defer:
-    nob_cmd_free(cmd);
-    nob_da_free(object_files);
+    cmd_free(cmd);
+    da_free(object_files);
     return result;
 }
 
 bool build_cyber_player(const char *sources[]) {
     bool result = true;
-    Nob_Cmd cmd = {0};
-    Nob_Procs procs = {0};
+    Cmd cmd = {0};
+    Procs procs = {0};
     cmd.count = 0;
 
-    nob_cmd_append(&cmd, CC);
-    
+    cmd_append(&cmd, CC);
+
     // "sr.c", "progress.c";
 
     const char *source = NULL;
-    for (int i = 0; source = sources[i]; ++i) {
-        nob_log(NOB_INFO, "Appending Source `%s`\n", source);
-        nob_cmd_append(&cmd, source,);
+    for (int i = 0; (source = sources[i]); ++i) {
+        nob_log(INFO, "Appending Source `%s`\n", source);
+        cmd_append(&cmd, source,);
     }
 
-    
-    nob_cmd_append(&cmd, nob_temp_sprintf("-o%s/%s", BUILD_DIR, BIN));
+
+    cmd_append(&cmd, temp_sprintf("-o%s/%s", BUILD_DIR, BIN));
 
 
     // OpenGL renderer is broken rn
-    nob_cmd_append(&cmd, "-DSOFTWARE_RENDERER");
-    nob_cmd_append(&cmd, "-D_REENTRANT");
-    // nob_cmd_append(&cmd, "-O3");
-    // nob_cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
+    cmd_append(&cmd, "-DSOFTWARE_RENDERER");
+    cmd_append(&cmd, "-D_REENTRANT");
+    // cmd_append(&cmd, "-O3");
+    // cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
 
     // "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include","-I/usr/include/sysprof-6","-lglib-2.0"
-    nob_cmd_append(&cmd, "-I./vendor/raylib/src/", "-I./vendor/", "-pthread");
-    nob_cmd_append(&cmd,  "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include" ,"-I/usr/include/sysprof-6", "-pthread","-lglib-2.0");
+    cmd_append(&cmd, "-I.", "-I./src/include/","-I./vendor/raylib/src/", "-I./src/vendor/", "-pthread");
+    cmd_append(&cmd,  "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include" ,"-I/usr/include/sysprof-6", "-pthread","-lglib-2.0");
 
 
 
-    nob_cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-lmpv", "-lSDL2", "-lm", "-L./",
+    cmd_append(&cmd, "-lmpv", "-lSDL2", "-lm", "-L./",
                    "-l:./" RAYLIB_BUILD_DIR "/libraylib.a", "-lpthread");
 #if defined(__MINGW64__)
-    nob_cmd_append(&cmd, "-I/usr/include/SDL2", "-I/mingw64/include");
-
-    // nob_cmd_append(&cmd, "-lglfw3");
-    // nob_cmd_append(&cmd, "-lopengl32");
-    nob_cmd_append(&cmd, "-lwinmm", "-lgdi32");
-    // nob_cmd_append(&cmd, "-static");
+    cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/usr/include/SDL2", "-I/mingw64/include");
+    // cmd_append(&cmd, "-lglfw3");
+    // cmd_append(&cmd, "-lopengl32");
+    cmd_append(&cmd, "-lwinmm", "-lgdi32");
+    //
+    // NOTE: It can't be static since we don't compile mpv into a lib.a
+    // cmd_append(&cmd, "-static");
+    //
 #else
-    nob_cmd_append(&cmd, "-lglfw", "-ldl");
+    cmd_append(&cmd, "-lglfw", "-ldl");
 #endif
 
 
-    if (!nob_cmd_run_sync(cmd)) nob_return_defer(false);
+    if (!cmd_run_sync(cmd)) return_defer(false);
 
-    nob_log(NOB_INFO, "OK: %s", __PRETTY_FUNCTION__);
+    nob_log(INFO, "OK: %s", __PRETTY_FUNCTION__);
+
+    String_Builder sb = {0};
+    sb_append_cstr(&sb, "[\n");
+    nob_log(INFO, "`gen_compile_commands_json`");
+    gen_compile_commands_json(&sb, cmd);
+    sb_append_cstr(&sb, "\n]\0");
+    // sb_append_null(&sb);
+
+    if (write_entire_file("compile_commands.json", sb.items, sb.count)) {
+        nob_log(INFO, "`compile_commands.json` generated with success");
+    } else {
+        nob_log(ERROR, "`compile_commands.json` could not be generated");
+    }
 
 defer:
-    nob_cmd_free(cmd);
-    nob_da_free(procs);
+    cmd_free(cmd);
+    da_free(procs);
     return result;
 }
 
@@ -160,44 +252,43 @@ int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
 
-    const char *program = nob_shift_args(&argc, &argv);
+    const char *program = shift_args(&argc, &argv);
 
     const char* arg = "";
     bool run = false;
     while (argc > 0) {
-        arg = nob_shift_args(&argc, &argv);
-        Nob_String_View arg_sv = nob_sv_from_cstr(arg);
-        if(nob_sv_eq(arg_sv, nob_sv_from_cstr("run"))) {
+        arg = shift_args(&argc, &argv);
+        String_View arg_sv = sv_from_cstr(arg);
+        if(sv_eq(arg_sv, sv_from_cstr("run"))) {
             run = true;
-        } else if(nob_sv_eq(arg_sv, nob_sv_from_cstr("example"))) {
+        } else if(sv_eq(arg_sv, sv_from_cstr("example"))) {
             if (argc > 0) {
-                const char* example = nob_shift_args(&argc, &argv);
+                const char* example = shift_args(&argc, &argv);
                 const char* sources[] = {example, NULL};
                 build_cyber_player(sources);
 
-                const char *src = nob_temp_sprintf("%s/%s", BUILD_DIR, BIN);
+                const char *src = tprintf("%s/%s", BUILD_DIR, BIN);
 
-                Nob_String_View example_sv = nob_sv_from_cstr(example);
-                
+                String_View example_sv = sv_from_cstr(example);
+
+                //
+                // We could, but fuckit
                 // malloc(example_sv.count);
-                const char* cstr_example_bin = basename((char*)example);
+                // memset
+                //
+                char* cstr_example_bin = basename((char*)example);
                 char *ext = strrchr(cstr_example_bin, '.');
                 if (ext) {
                     *ext = '\0'; // Terminate the string at the '.' charact
                 }
-                Nob_String_View example_bin = nob_sv_from_cstr(cstr_example_bin);
+                String_View example_bin = sv_from_cstr(cstr_example_bin);
                 // example_bin.count -= 2;
 
-                printf("my sv"SV_Fmt"\n", SV_Arg(example_sv));
-                printf("my bin"SV_Fmt"\n", SV_Arg(example_bin));
-                printf("my bin %s\n", cstr_example_bin);
-
-
-                const char *dst = nob_temp_sprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
-                bool ok  = nob_copy_file(src, dst);
+                const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
+                bool ok  = copy_file(src, dst);
                 NOB_ASSERT(ok);
             } else {
-                nob_log(NOB_ERROR, "no example provided");
+                nob_log(ERROR, "no example provided");
                 exit(1);
             }
             run = true;
@@ -206,39 +297,38 @@ int main(int argc, char **argv) {
 
     const char *file = "";
     if (argc > 0) {
-        file = nob_shift_args(&argc, &argv);
+        file = shift_args(&argc, &argv);
     }
 
     const char *raylib = "";
     if (argc > 0) {
-        file = nob_shift_args(&argc, &argv);
+        file = shift_args(&argc, &argv);
     }
 
-    nob_log(NOB_INFO, "Making directory for build `%s`", BUILD_DIR);
-    if (!nob_mkdir_if_not_exists(BUILD_DIR)) return false;
+    nob_log(INFO, "Making directory for build `%s`", BUILD_DIR);
+    if (!mkdir_if_not_exists(BUILD_DIR)) return false;
 
-    
+
     if (!build_raylib()) return 1;
 
-    const char *sources[] = {"sr.c", "progress.c", NULL};
+    const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
     if (!build_cyber_player(sources)) return 1;
 
     if (run) {
-        Nob_Cmd cmd = {0};
+        Cmd cmd = {0};
 
 #if defined(__MINGW64__)
         // const char* playfile =
         // "/e/Torrents/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN/Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.mkv";
         const char *playfile =
             "\\Users\\Administrator\\Downloads\\cat_falls_ass_on_camera.mp4";
-        nob_cmd_append(&cmd, nob_temp_sprintf("%s.exe", BUILD_DIR "/" BIN));
+        cmd_append(&cmd, temp_sprintf("%s.exe", BUILD_DIR "/" BIN));
 #else
         const char *playfile = "~/media/videos/life_is_everything.mp4";
-        nob_cmd_append(&cmd, BUILD_DIR "/" BIN);
+        cmd_append(&cmd, BUILD_DIR "/" BIN);
 #endif
-        nob_cmd_append(&cmd, playfile);
-
-        if (!nob_cmd_run_sync(cmd)) return -1;
+        cmd_append(&cmd, playfile);
+        if (!cmd_run_sync(cmd)) return -1;
     }
 
     return 0;
