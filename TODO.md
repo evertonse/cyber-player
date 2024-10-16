@@ -10,6 +10,7 @@ check if merge segments is actually correct
 TODO: Checkout Raygui
 
 TODO: Get first frame to be the thumb nail with option to save another image as thumb nail
+TODO: SQLite almagamation to store the data
 
 
 Is this useful?

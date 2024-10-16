@@ -26,6 +26,7 @@
 #   define realpath(N, R) _fullpath((R), (N), PATH_MAX)
 #else
 #   include "dirent.h"
+#   include <linux/limits.h>
 #endif
 
 #include <math.h>
@@ -208,9 +209,11 @@ void collect_file_progress_info(void) {
         realpath(currently_playing_path, temp.filename);
         // Alternatively: TextCopy(temp.filename, currently_playing_path);
 
+        SetTraceLogLevel(LOG_ERROR);
+        TRACE(LOG_ERROR, "temp.filename = %s", temp.filename);
         arrput(file_progress_darray, temp);
         fp_index = arrlen(file_progress_darray) - 1;
-        shput(file_progress_hash_map, currently_playing_path, fp_index);
+        shput(file_progress_hash_map, temp.filename, fp_index);
     }
     file_progress_darray[fp_index].segments = sc.watched_segments;
     file_progress_darray[fp_index].segment_count = arrlen(sc.watched_segments);
@@ -252,7 +255,6 @@ void player_load_file(void *ctx, const char *file_path) {
     currently_playing_path = file_path;
     volume = 50;
     mpv_command_async(ctx, 0, cmd);
-    // GuiDropdownBox()
 
     reset_segments_info();
 
@@ -362,8 +364,7 @@ static void on_property_change(mpv_event_property *prop) {
         assert(prop->format == MPV_FORMAT_FLAG);
 
         sc.paused = *(bool *)prop->data;
-        TRACE(LOG_ERROR, "Current %s: %s\n", prop->name,
-              sc.paused ? "true" : "false");
+        TRACE(LOG_INFO, "Current %s: %s\n", prop->name, sc.paused ? "true" : "false");
     }
 
     if (strcmp(prop->name, "volume") == 0) {
@@ -388,14 +389,18 @@ static void on_property_change(mpv_event_property *prop) {
             bool paused = sc.paused;
 
             if (paused || seeking) {
+                if (start < last_position) {
+                    add_watched_segment(start, last_position);
+                }
+                sc.segment_start = -1;
+                sc.last_position = -1;
                 goto playback_time_done;
             }
 
             if (last_position < 0) {
                 sc.segment_start = time_position;
-            } else if ((time_position < start) ||
-                       (fabs(time_position - last_position) >
-                        PLAYBACK_GAP_SIZE)) {
+            } else if ((time_position < start) 
+                    || (fabs(time_position - last_position) > PLAYBACK_GAP_SIZE)) {
                 // Gap in playback, end current segment
                 add_watched_segment(start, last_position);
 
@@ -662,7 +667,7 @@ int main(int argc, char *argv[]) {
     SetWindowState(
         FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | FLAG_WINDOW_HIGHDPI
         // support mouse passthrough, only supported when
-        | FLAG_WINDOW_UNDECORATED 
+        | FLAG_WINDOW_UNDECORATED
         // FLAG_WINDOW_MOUSE_PASSTHROUGH
         | FLAG_VSYNC_HINT
 
@@ -775,7 +780,7 @@ int main(int argc, char *argv[]) {
     bool holding_crtl_click = false;
     Vector2 holding_crtl_click_init_position = {0,0};
 
-    int scrollIndex = 0, active = 0 , focus = 0;
+    int scrollIndex = 4, active = 0 , focus = 0;
     while (!WindowShouldClose()) {
         BeginDrawing();
         EndTextureMode();
@@ -1078,6 +1083,8 @@ int main(int argc, char *argv[]) {
                           (volume_height - 2 * volume_pad), GREEN);
         }
 
+
+
         if (draw_file_list) {
             const char **text = (const char **) mp4files.paths;
             int active_old = active;
@@ -1089,7 +1096,29 @@ int main(int argc, char *argv[]) {
             assert(a == 0);
         }
 
-        TRACE(LOG_ERROR, "scrollIndex%d, active%d, focus%d", scrollIndex, active, focus);
+        int drop_box_active = true;
+        // GuiDropdownBox(CLITERAL(Rectangle){0,0, 200, 200}, "kkkkkkkkkkkk", &drop_box_active, true);
+        // GuiScrollBar(CLITERAL(Rectangle){200, 200, 400, 400},29, 19, 13);
+        TRACE(LOG_INFO, "scrollIndex = %d, active = %d, focus = %d", scrollIndex, active, focus);
+
+        {
+            static int show = false;
+            Rectangle bounds = {window_size.x/2-100, window_size.y/2-100, 200, 200};
+
+            if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_F)) {
+                show = !show;
+            }
+
+            if(show){
+                bool secretViewActive = false;
+                const char *buttons = "";
+                char text[PATH_MAX];
+                int clicked = GuiTextInputBox(bounds, "title", "",
+                        buttons, text, PATH_MAX,
+                        &secretViewActive);
+                TRACE(LOG_ERROR, "text = %s", text);
+            }
+        }
         EndDrawing();
     }
 
@@ -1106,9 +1135,8 @@ done:
 
     store_progress_data(FILE_PROGRESS, file_progress_darray,
                         arrlen(file_progress_darray));
+    TRACEINFO("Progress file stored in `%s`", FILE_PROGRESS);
 
-    // TODO: Destroy all threads here
-    pthread_rwlock_destroy(sc.rwlock);
 
 // Destroy the GL renderer and all of the GL objects it allocated. If video
 // is still running, the video track will be deselected.
