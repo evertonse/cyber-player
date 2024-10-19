@@ -89,12 +89,16 @@
 #    include <windows.h>
 #    include <direct.h>
 #    include <shellapi.h>
+#    define PATH_SEPARATOR "\\"
+#    define PATH_SEPARATOR_CHAR '\\'
 #else
 #    include <sys/types.h>
 #    include <sys/wait.h>
 #    include <sys/stat.h>
 #    include <unistd.h>
 #    include <fcntl.h>
+#    define PATH_SEPARATOR "/"
+#    define PATH_SEPARATOR_CHAR '/'
 #endif
 
 #ifdef _WIN32
@@ -151,12 +155,19 @@ bool nob_read_entire_dir(const char *parent, Nob_File_Paths *children);
 bool nob_write_entire_file(const char *path, const void *data, size_t size);
 Nob_File_Type nob_get_file_type(const char *path);
 
+
 #define nob_return_defer(value) do { result = (value); goto defer; } while(0)
 
 // Initial capacity of a dynamic array
 #ifndef NOB_DA_INIT_CAP
 #define NOB_DA_INIT_CAP 256
 #endif
+
+
+// For loop macro for dynamic arrays that provides both item and index
+#define nob_da_for(da)                                                               \
+    for (size_t it_index = 0; it_index < (da)->count; ++it_index)                    \
+    for (typeof((da)->items[0]) it = (da)->items[it_index], *_ = NULL; _ == NULL; _ = &it)
 
 // Append an item to a dynamic array
 #define nob_da_append(da, item)                                                          \
@@ -168,6 +179,39 @@ Nob_File_Type nob_get_file_type(const char *path);
         }                                                                                \
                                                                                          \
         (da)->items[(da)->count++] = (item);                                             \
+    } while (0)
+
+// Removes an item from a dynamic array at the specified index
+#define nob_da_remove(da, index)                                                        \
+    do {                                                                                \
+        NOB_ASSERT((da)->count > 0 && "Trying to delete from empty array");             \
+        NOB_ASSERT((index) >= 0 && (index) < (da)->count && "Index out of bounds");     \
+                                                                                        \
+        /* Shift remaining elements to the left */                                      \
+        for (size_t i = (index); i < (da)->count - 1; ++i) {                            \
+            (da)->items[i] = (da)->items[i + 1];                                        \
+        }                                                                               \
+                                                                                        \
+        (da)->count--;                                                                  \
+                                                                                        \
+        /* Optional: Shrink array if it's too "empty" */                                  \
+        if ((da)->count > 0 && (da)->count < (da)->capacity / 4) {                      \
+            (da)->capacity /= 2;                                                        \
+            (da)->items = NOB_REALLOC((da)->items, (da)->capacity*sizeof(*(da)->items));\
+            NOB_ASSERT((da)->items != NULL && "Realloc failed");                        \
+        }                                                                               \
+    } while (0)
+
+
+// Alternative version that removes by matching value (first occurrence)
+#define nob_da_remove_item(da, item)                                                   \
+    do {                                                                               \
+        for (size_t i = 0; i < (da)->count; ++i) {                                     \
+            if (memcmp(&((da)->items[i]), &(item), sizeof(item)) == 0) {               \
+                nob_da_delete((da), i);                                                \
+                break;                                                                 \
+            }                                                                          \
+        }                                                                              \
     } while (0)
 
 #define nob_da_free(da) NOB_FREE((da).items)
@@ -740,6 +784,68 @@ defer:
     return result;
 }
 
+// Type definition for the filter callback
+typedef bool (*Nob_File_Filter)(const char *path, void *user_data);
+
+/* 
+. Example Usage:
+.   File_Paths hfiles = {0};
+.   read_entire_dir_filtered("./", &hfiles, true, nob_filter_by_extension, ".h");
+*/
+bool nob_read_entire_dir_filtered(const char *parent, Nob_File_Paths *children, bool use_full_path,
+                                Nob_File_Filter filter, void *user_data)
+{
+    bool result = true;
+    DIR *dir = NULL;
+    
+    dir = opendir(parent);
+    if (dir == NULL) {
+        nob_log(NOB_ERROR, "Could not open directory %s: %s", parent, strerror(errno));
+        nob_return_defer(false);
+    }
+
+    errno = 0;
+    static char full_path[PATH_MAX]; // Reuse the same buffer (hence static)
+    struct dirent *ent = readdir(dir);
+    while (ent != NULL) {
+        const char *path = ent->d_name;
+        // Optionally create full path for the file
+        if (use_full_path) {
+            const char *fmt =
+                (parent[strlen(parent) - 1] != PATH_SEPARATOR_CHAR)
+                    ? "%s" PATH_SEPARATOR "%s"
+                    : "%s%s";
+            snprintf(full_path, sizeof(full_path), fmt, parent, ent->d_name);
+            path = full_path;
+        }
+
+        // Apply only filter if provided
+        if (filter == NULL || filter(path, user_data)) {
+            nob_da_append(children, nob_temp_strdup(path));
+        }
+
+        ent = readdir(dir);
+    }
+
+    if (errno != 0) {
+        nob_log(NOB_ERROR, "Could not read directory %s: %s", parent, strerror(errno));
+        nob_return_defer(false);
+    }
+
+defer:
+    if (dir) closedir(dir);
+    return result;
+}
+
+
+// Filter to only include files with a specific extension
+bool nob_filter_by_extension(const char *path, void *user_data)
+{
+    const char *extension = (const char *)user_data;
+    const char *file_ext = strrchr(path, '.');
+    return file_ext != NULL && strcmp(file_ext, extension) == 0;
+}
+
 bool nob_write_entire_file(const char *path, const void *data, size_t size)
 {
     bool result = true;
@@ -898,6 +1004,26 @@ char *nob_temp_sprintf(const char *format, ...)
     va_end(args);
 
     return result;
+}
+
+void nob_sb_temp_printf(Nob_String_Builder *sb, const char *format, ...)
+{
+    NOB_ASSERT(false && "NOT IMPLEMENTED");
+    // va_list args;
+    // va_start(args, format);
+    // int n = vsnprintf(NULL, 0, format, args);
+    // va_end(args);
+    //
+    // NOB_ASSERT(n >= 0);
+    //
+    // char *result = nob_temp_alloc(n + 1);
+    // NOB_ASSERT(result != NULL && "Extend the size of the temporary allocator");
+    // // TODO: use proper arenas for the temporary allocator;
+    // va_start(args, format);
+    // vsnprintf(result, n + 1, format, args);
+    // va_end(args);
+    //
+    // return result;
 }
 
 void nob_temp_reset(void)
@@ -1249,10 +1375,13 @@ int closedir(DIR *dirp)
         #define FILE_SYMLINK NOB_FILE_SYMLINK
         #define FILE_OTHER NOB_FILE_OTHER
         #define File_Type Nob_File_Type
+            
         #define mkdir_if_not_exists nob_mkdir_if_not_exists
         #define copy_file nob_copy_file
         #define copy_directory_recursively nob_copy_directory_recursively
         #define read_entire_dir nob_read_entire_dir
+        #define read_entire_dir_filtered nob_read_entire_dir_filtered
+        #define filter_by_extension nob_filter_by_extension
         #define write_entire_file nob_write_entire_file
         #define get_file_type nob_get_file_type
         #define rename nob_rename
@@ -1262,7 +1391,10 @@ int closedir(DIR *dirp)
 
         #define return_defer nob_return_defer
 
+        #define da_for nob_da_for
         #define da_append nob_da_append
+        #define da_remove nob_da_remove
+        #define da_remove_item nob_da_remove_item
         #define da_free nob_da_free
         #define da_append_many nob_da_append_many
 

@@ -33,6 +33,8 @@ static void unescape_filename(const char* input, char* output, size_t output_siz
 }
 
 
+// TODO: Just save the s truct as is with fixed size, if not pointers are involved it should work just fine
+
 // Function to write the data to a binary file
 void store_progress_data(const char* filename, FileProgress* progress_array, int array_size) {
 

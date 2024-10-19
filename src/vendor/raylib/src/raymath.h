@@ -172,6 +172,22 @@ typedef struct float16 {
 // Module Functions Definition - Utils math
 //----------------------------------------------------------------------------------
 
+// Max between two values
+RMAPI float Max(float value1, float value2)
+{
+    if (value1 > value2) return value1;
+
+    return value2;
+}
+
+// Min between two values
+RMAPI float Min(float value1, float value2)
+{
+    if (value1 < value2) return value1;
+
+    return value2;
+}
+
 // Clamp float value
 RMAPI float Clamp(float value, float min, float max)
 {

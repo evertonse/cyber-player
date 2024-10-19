@@ -13,9 +13,13 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "raygui.h"
 #define TRACE(level, ...) TraceLog(level, __VA_ARGS__)
 #define TRACEINFO(...) TraceLog(LOG_INFO, __VA_ARGS__)
 
+#if defined(__MINGW64_VERSION_MAJOR) || defined(__MINGW64__) ||  defined(__MINGW32__)
+#   define MINGW
+#endif
 /*
  . Create a realpath replacement macro for when compiling under mingw
  . Based upon
@@ -35,14 +39,19 @@
 #include <mpv/render_gl.h>
 #include <pthread.h>
 
-#define RAYGUI_IMPLEMENTATION
-#include <raygui.h>
-#include <raylib.h>
-#include <raymath.h>
-#include <rlgl.h>
+
+#define GUI_IMPLEMENTATION
+#include <gui.h>
+
+
+#include "raylib.h"
+#include "raymath.h"
+#include "rlgl.h"
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
+#include "header.h"
+// #include "rcore.h" // For debugginh purposes
 
 #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wno-padded"
@@ -61,9 +70,6 @@
 #define FILE_PROGRESS "progress.bin"
 
 
-#include "raylib.h"
-// #include "rcore.h"
-#include "header.h"
 
 #define WINDOW_WIDTH 900
 #define WINDOW_HEIGHT 900
@@ -84,23 +90,23 @@ static void *get_proc_address_mpv(void *ctx, const char *name) {
 #define MAX_SEGMENTS 1000
 
 static struct {
-    bool paused;
-    const char *absolute_path;  // It's not absolute rn
-    Segment *watched_segments;
-    pthread_rwlock_t *rwlock;  // Not needed rn
-    int segment_count;
-    double duration;
-    double last_position;
-    double segment_start;
+    bool             paused;
+    const            char *absolute_path; //  It's   not absolute rn
+    Segment          *watched_segments;
+    pthread_rwlock_t *rwlock;             //  NOT Needed rn
+    int              segment_count;
+    double           duration;
+    double           last_position;
+    double           segment_start;
 } sc /* segment_context */ = {
-    .absolute_path = NULL,
-    .paused = false,
+    .absolute_path    = NULL,
+    .paused           = false,
     .watched_segments = NULL,
-    .rwlock = &(pthread_rwlock_t){},
-    .segment_count = 0,
-    .duration = 0,
-    .last_position = -1,
-    .segment_start = -1,
+    .rwlock           = &(pthread_rwlock_t){},
+    .segment_count    = 0,
+    .duration         = 0,
+    .last_position    = -1,
+    .segment_start    = -1,
 };
 
 void add_watched_segment(double start, double end) {
@@ -162,13 +168,6 @@ void merge_segments() {
     sc.segment_count = arrlen(sc.watched_segments);
 }
 
-// #define NOB_IMPLEMENTATION
-// #include "nob.h"
-
-#if defined(__MINGW64_VERSION_MAJOR) || defined(__MINGW64__) || \
-    defined(__MINGW32__)
-#define MINGW
-#endif
 
 static pthread_mutex_t *render_update_mutex = &(pthread_mutex_t){},
                        *event_wakeup_mutex = &(pthread_mutex_t){};
@@ -177,6 +176,7 @@ static double *percent_positions = NULL;
 static const char *currently_playing_path = NULL;
 static double percent_position;
 static double volume;
+static bool draw_file_list = false;
 static bool seeking = false;
 
 static FileProgress *file_progress_darray = NULL;
@@ -208,6 +208,7 @@ void collect_file_progress_info(void) {
         // If RESOLVED is null, the result is malloc'd
         realpath(currently_playing_path, temp.filename);
         // Alternatively: TextCopy(temp.filename, currently_playing_path);
+        TextCopy(temp.filename, currently_playing_path);
 
         SetTraceLogLevel(LOG_ERROR);
         TRACE(LOG_ERROR, "temp.filename = %s", temp.filename);
@@ -263,12 +264,13 @@ void player_load_file(void *ctx, const char *file_path) {
     realpath(file_path, buffer);
     int index = shget(file_progress_hash_map, buffer);
 
-    printf("\n\n\nCURRENT FILE = %s\n", buffer);
-    print_all_file_progress();
     for (int i = 0; i < shlen(file_progress_hash_map); ++i) {
-        printf("\nkey:%s | value:%d found_idx:%d\n",
-               file_progress_hash_map[i].key, file_progress_hash_map[i].value,
+        if (file_progress_hash_map[i].value != HASH_DOES_NOT_EXIST) {
+            printf("\nvalue:%d | key:%s | found_idx:%d\n",
+               file_progress_hash_map[i].value, 
+               file_progress_hash_map[i].key, 
                index);
+        }
     }
 
     if (index != HASH_DOES_NOT_EXIST) {
@@ -374,7 +376,7 @@ static void on_property_change(mpv_event_property *prop) {
         }
     }
 
-#define PLAYBACK_GAP_SIZE 1.0
+#define PLAYBACK_GAP_SIZE 2.0
     // playback-time does the same thing as time-pos but works for streaming
     // media
     if (strcmp(prop->name, "playback-time") == 0) {
@@ -399,7 +401,7 @@ static void on_property_change(mpv_event_property *prop) {
 
             if (last_position < 0) {
                 sc.segment_start = time_position;
-            } else if ((time_position < start) 
+            } else if ((time_position < start)
                     || (fabs(time_position - last_position) > PLAYBACK_GAP_SIZE)) {
                 // Gap in playback, end current segment
                 add_watched_segment(start, last_position);
@@ -493,7 +495,7 @@ static void handle_mpv_events(mpv_handle *mpv) {
          *  MPV_EVENT_LOG_MESSAGE:            mpv_event_log_message*
          *  MPV_EVENT_CLIENT_MESSAGE:         mpv_event_client_message*
          *  MPV_EVENT_START_FILE:             mpv_event_start_file* (since
-         * v1.108) MPV_EVENT_END_FILE:               mpv_event_end_file*
+         *  MPV_EVENT_END_FILE:               mpv_event_end_file*
          *  MPV_EVENT_HOOK:                   mpv_event_hook*
          *  MPV_EVENT_COMMAND_REPLY*          mpv_event_command*
          *  other: NULL
@@ -552,7 +554,7 @@ int main(int argc, char *argv[]) {
                    file_progress_darray[i].segments[j].end);
         }
         printf("\n");
-        shput(file_progress_hash_map, file_progress_darray[i].filename, i);
+        shput(file_progress_hash_map, strdup(file_progress_darray[i].filename), i);
     }
 
     if (argc != 2) die("pass a single media file as argument");
@@ -625,12 +627,14 @@ int main(int argc, char *argv[]) {
     mpv_check_error(
         mpv_observe_property(mpv, 69, "duration", MPV_FORMAT_DOUBLE));
 
-#define FILES_LISTING_LIMIT 100
+// #define FILES_LISTING_LIMIT (8*2 + 3)
+#define FILES_LISTING_LIMIT (222)
 
 #if defined(MINGW)
     // const char* dir =
     // "E:\\Torrents\\Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN";
-    const char *dir = "C:\\Users\\Administrator\\Downloads";
+    // const char *dir = "C:\\Users\\Administrator\\Downloads";
+    const char *dir = "D:\\Donwloads";
     // TODO: Add better file filtering for Raylib
     mp4files = LoadDirectoryFilesEx(dir, ".mp4", true);
     // mp4files = LoadDirectoryFiles(dir);
@@ -638,6 +642,7 @@ int main(int argc, char *argv[]) {
     mp4files =
         LoadDirectoryFilesEx("/home/excyber/media/videos/", ".mp4", true);
 #endif
+
     mp4files.count = mp4files.count < FILES_LISTING_LIMIT ? mp4files.count
                                                           : FILES_LISTING_LIMIT;
 
@@ -645,8 +650,12 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < mp4files.count; ++i) {
         printf("%s\n", mp4files.paths[i]);
     }
+
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
 
+    // Custom file dialog
+    GuiWindowFileDialogState fileDialogState = InitGuiWindowFileDialog(GetWorkingDirectory());
+    char fileNameToLoad[PATH_MAX] = { 0 };
 
 
 #define FONT_SIZE (40/2)
@@ -776,12 +785,26 @@ int main(int argc, char *argv[]) {
     char fps[123];
 
     void *pixels = malloc(sizeof(char) * 4 * 2000 * 2000);
-    bool draw_file_list = false;
-    bool holding_crtl_click = false;
+    bool holding_crtl_click_before = false;
     Vector2 holding_crtl_click_init_position = {0,0};
 
-    int scrollIndex = 4, active = 0 , focus = 0;
+    int active = -1 , focus = 0;
+    Vector2 scrollIndex = {4, 4};
     while (!WindowShouldClose()) {
+        if (fileDialogState.SelectFilePressed)
+        {
+            // Load image file (if supported extension)
+            if (IsFileExtension(fileDialogState.fileNameText, ".png"))
+            {
+                static Texture fileDialogTexture = {0};
+                strcpy(fileNameToLoad, TextFormat("%s""/""%s", fileDialogState.dirPathText, fileDialogState.fileNameText));
+                UnloadTexture(fileDialogTexture);
+                fileDialogTexture = LoadTexture(fileNameToLoad);
+            }
+
+            fileDialogState.SelectFilePressed = false;
+        }
+
         BeginDrawing();
         EndTextureMode();
         ClearBackground(BLACK);
@@ -790,6 +813,7 @@ int main(int argc, char *argv[]) {
         Vector2 mouse_wheel     = GetMouseWheelMoveV();
         Vector2 window_size     = CLITERAL(Vector2){GetScreenWidth(), GetScreenHeight()};
         Vector2 window_position = GetWindowPosition();
+        Vector2 mouse_delta     = GetMouseDelta();
 
         TRACE(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
               mouse_wheel.y);
@@ -809,12 +833,18 @@ int main(int argc, char *argv[]) {
         } else if (IsKeyPressedOrRepeat(KEY_M)) {
             const char *mpv_cmd[] = {"cycle", "mute", NULL};
             mpv_command_async(mpv, 0, mpv_cmd);
-        } else if (IsKeyDown(KEY_LEFT_CONTROL)) {
-            Vector2 diff = Vector2Subtract(mouse_position, holding_crtl_click_init_position);
+        } else if (holding_crtl_click_before || IsKeyDown(KEY_LEFT_CONTROL)) {
+            Vector2 diff;
+            // Both work, but is there a difference ?
+            // NOTE: Yes there is, demousedelta is janky
+            // diff = GetMouseDelta();
+            diff = Vector2Subtract(mouse_position, holding_crtl_click_init_position);
+
             Vector2 result_position = Vector2Add(window_position, diff);
+
             if(IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-                if (!holding_crtl_click) {
-                    holding_crtl_click = true;
+                if (!holding_crtl_click_before) {
+                    holding_crtl_click_before = true;
                     holding_crtl_click_init_position = CLITERAL(Vector2){mouse_position.x, mouse_position.y };
                 } else {
                     SetWindowPosition(result_position.x, result_position.y);
@@ -822,7 +852,7 @@ int main(int argc, char *argv[]) {
             }
 
             if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)){
-                holding_crtl_click = false;
+                holding_crtl_click_before = false;
 
                 printf("holding_crtl_click_init_position = {%f, %f}\n", holding_crtl_click_init_position.x, holding_crtl_click_init_position.y);
                 printf("curret_position = {%f, %f}\n", mouse_position.x, mouse_position.y);
@@ -837,7 +867,7 @@ int main(int argc, char *argv[]) {
         }
 
         {
-            if (mouse_wheel.y != 0.0) {
+            if (!draw_file_list && mouse_wheel.y != 0.0) {
                 char temp[5];
                 int diff = (int)(5.0 * mouse_wheel.y);
                 snprintf(temp, sizeof(temp), "%d", diff);
@@ -942,48 +972,6 @@ int main(int argc, char *argv[]) {
             CLITERAL(Vector2){0, 0}, WHITE);
 #endif
 
-        if (false /* disabled for now */&& draw_file_list) {
-            // Maybe considere SDF
-            // https://www.raylib.com/examples/text/loader.html?name=text_font_sdf
-
-            const int spacing = 0;
-            // const Font  font = GetFontDefault();
-            const Font font = jetbrains;
-            const float font_size = FONT_SIZE;
-            Color font_color = RED;
-
-            for (int i = 0; i < mp4files.count; ++i) {
-                Vector2 text_pos = {0, i * font_size};
-                const char *file_path = mp4files.paths[i];
-
-                if (i >= (FILES_LISTING_LIMIT / 2)) {
-                    SetTextureFilter(font.texture, TEXTURE_FILTER_BILINEAR);
-                    font_color = MAROON;
-                } else {
-                }
-                // RLAPI void DrawTextEx(Font font, const char *text, Vector2
-                // position, float fontSize, float spacing, Color tint); // Draw
-                // text using font and additional parameters
-                DrawTextEx(font, file_path, text_pos, font_size, spacing,
-                           font_color);
-                Vector2 text_size =
-                    MeasureTextEx(font, file_path, font_size, spacing);
-                // TRACELOG(LOG_INFO, "Mouse position = %d,%d",
-                // (int)mouse_pos.x, (int)mouse_pos.y);
-                Rectangle text_rect = {text_pos.x, text_pos.y, text_size.x,
-                                       text_size.y};
-                // Check if point is inside rectangle
-                // printf("text_size = {%d %d};\n", (int)text_size.x,
-                // (int)text_size.y);
-                if (CheckCollisionPointRec(mouse_position, text_rect)) {
-                    DrawTextEx(font, file_path, text_pos, font_size, spacing,
-                               BLUE);
-                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        player_load_file(mpv, file_path);
-                    }
-                }
-            }
-        }
 
         TRACE(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_position.x,
               (int)mouse_position.y);
@@ -1088,10 +1076,12 @@ int main(int argc, char *argv[]) {
         if (draw_file_list) {
             const char **text = (const char **) mp4files.paths;
             int active_old = active;
-            int a = GuiListViewEx(CLITERAL(Rectangle){0,0, window_size.x/2, window_size.y}, text, mp4files.count, &scrollIndex, &active, &focus);
+            static Vector2 scroll_percentage = { 0 } ;
+            float list_view_width = window_size.x/4;
+            int a = GuiMoListView(CLITERAL(Rectangle){window_size.x/6 - list_view_width/2, 20, list_view_width, window_size.y/1.5}, text, mp4files.count, &scroll_percentage, &active, &focus, true);
+            static bool done = false;
             if (active_old != active && active >= 0 && active < mp4files.count) {
                 player_load_file(mpv, mp4files.paths[active]);
-                draw_file_list = false;
             }
             assert(a == 0);
         }
@@ -1100,7 +1090,6 @@ int main(int argc, char *argv[]) {
         // GuiDropdownBox(CLITERAL(Rectangle){0,0, 200, 200}, "kkkkkkkkkkkk", &drop_box_active, true);
         // GuiScrollBar(CLITERAL(Rectangle){200, 200, 400, 400},29, 19, 13);
         TRACE(LOG_INFO, "scrollIndex = %d, active = %d, focus = %d", scrollIndex, active, focus);
-
         {
             static int show = false;
             Rectangle bounds = {window_size.x/2-100, window_size.y/2-100, 200, 200};
@@ -1109,22 +1098,75 @@ int main(int argc, char *argv[]) {
                 show = !show;
             }
 
-            if(show){
+            if (show) {
+                static int edit_mode  = true;
                 bool secretViewActive = false;
-                const char *buttons = "";
-                char text[PATH_MAX];
-                int clicked = GuiTextInputBox(bounds, "title", "",
-                        buttons, text, PATH_MAX,
-                        &secretViewActive);
-                TRACE(LOG_ERROR, "text = %s", text);
+                const char *buttons   = "";
+
+
+                int  text_size = FONT_SIZE;
+                static char text[PATH_MAX];
+                int  clicked   = GuiTextBox(bounds, text, text_size, edit_mode);
+                // int clicked = GuiTextInputBox(bounds, "title", "",
+                //         buttons, text, PATH_MAX,
+                //         &secretViewActive);
+
+                static int spinner_value = 29;
+                GuiSpinner(CLITERAL(Rectangle){700, 700, 20, 20}, text, &spinner_value, 0, 100, false);
+                // printf("text = %s", text);
             }
         }
+        static const int close_button_size = 25;
+
+        GuiSetStyle(BUTTON, BASE_COLOR_FOCUSED, ColorToInt(CLITERAL(Color){202, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, TEXT_COLOR_FOCUSED, ColorToInt(RAYWHITE));
+        GuiSetStyle(BUTTON, BORDER_COLOR_FOCUSED, ColorToInt(CLITERAL(Color){202, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, BASE_COLOR_PRESSED, ColorToInt(CLITERAL(Color){0xFF, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, BORDER_COLOR_PRESSED, ColorToInt(CLITERAL(Color){0xFF, 17, 35, 0xFF}));
+        int xbutton_clicked = GuiButton( CLITERAL(Rectangle){window_size.x-close_button_size, 0, close_button_size, close_button_size},
+            GuiIconText(ICON_CROSS_SMALL, NULL));
+            // GuiIconText(ICON_CROSS, NULL));
+            if (xbutton_clicked) {
+                goto done;
+            }
+
+        GuiSetStyle(BUTTON, BASE_COLOR_FOCUSED, ColorToInt(CLITERAL(Color){22, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, TEXT_COLOR_FOCUSED, ColorToInt(RAYWHITE));
+        GuiSetStyle(BUTTON, BORDER_COLOR_FOCUSED, ColorToInt(CLITERAL(Color){22, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, BASE_COLOR_PRESSED, ColorToInt(CLITERAL(Color){0, 17, 35, 0xFF}));
+        GuiSetStyle(BUTTON, BORDER_COLOR_PRESSED, ColorToInt(CLITERAL(Color){0, 17, 35, 0xFF}));
+        int openFile = GuiButton(CLITERAL(Rectangle){window_size.x-2*close_button_size, 0, close_button_size, close_button_size}, GuiIconText(ICON_FILE_OPEN, ""));
+        if (openFile || IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_O)) {
+            //----------------------------------------------------------------------------------
+            fileDialogState.windowActive = true;
+        }
+
+        if (fileDialogState.windowActive) {
+            GuiLock();
+        }
+
+        GuiUnlock();
+        GuiWindowFileDialog(&fileDialogState);
+
+        if (fileDialogState.SelectFilePressed) {
+            if (IsFileExtension(fileDialogState.fileNameText, ".mp4") 
+                || IsFileExtension(fileDialogState.fileNameText, ".mkv")
+            ) {
+                strcpy(fileNameToLoad, TextFormat("%s" PATH_SEPERATOR "%s", fileDialogState.dirPathText, fileDialogState.fileNameText));
+                player_load_file(mpv, fileNameToLoad);
+            }
+
+            fileDialogState.SelectFilePressed = false;
+        }
+
+        nob_temp_reset();
         EndDrawing();
     }
 
 done:
+    // CloseWindow();
     // Add final segment
-
+    // ■ Label followed by a declaration is a C23 extension
     double start = sc.segment_start, end = sc.last_position;
 
     add_watched_segment(start, end);

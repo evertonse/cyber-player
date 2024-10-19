@@ -26,6 +26,8 @@
 #define AR "ar"
 
 #define RAYLIB_BUILD_DIR BUILD_DIR "/raylib"
+#define RAYLIB_SOURCE_DIR "./src/vendor/raylib/src"
+
 
 static const char *raylib_modules[] = {
     "rcore",   "raudio", "rglfw",     "rmodels",
@@ -42,7 +44,7 @@ static const char *raylib_modules[] = {
 
 typedef Nob_Cmd CStr_Array;
 // Gen without the []
-void gen_compile_commands_json(String_Builder* sb, Cmd cmd, CStr_Array hfiles) {
+void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
 
     // char* out =  tprintf("%s%s\0",
     char root_dir[PATH_MAX];
@@ -59,31 +61,45 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, CStr_Array hfiles) {
         int* items;
         size_t count;
         size_t capacity;
-    } cfiles_indices;
-
-
+    } cfiles_indices = {0};
 
     const char *comma = cmd.count > 0 ? "," : "";
 
     { // Extra Defines for debug  in .h files
-        sb_append_cstr(sb, "    \"");
-        sb_append_cstr(sb, "cc");
-        sb_printf(sb, "\"%s\n", comma);
 
         sb_append_cstr(sb, "    \"");
-        sb_append_cstr(sb, "-DNOB_STRIP_PREFIX");
+        sb_printf(sb, "%s", "cc");
         sb_printf(sb, "\"%s\n", comma);
 
-        sb_append_cstr(sb, "    \"");
-        sb_append_cstr(sb, "-DNOB_IMPLEMENTATION");
-        sb_printf(sb, "\"%s\n", comma);
+        CStr_Array extra_defines = {0};
+        const char *extra_defines_cstrs[] = {
+            "GUI_IMPLEMENTATION", "NOB_STRIP_PREFIX", "NOB_IMPLEMENTATION",
+            "RAYGUI_IMPLEMENTATION", "RAYGUI_MO_IMPLEMENTATION",
 
-        sb_append_cstr(sb, "    \"");
-        sb_append_cstr(sb, "-DRAYGUI_IMPLEMENTATION");
-        sb_printf(sb, "\"%s\n", comma);
+            "GUI_FILE_DIALOG_IMPLEMENTATION",
+            "GUI_WINDOW_FILE_DIALOG_IMPLEMENTATION",
+
+            /* "_WIN32", */ "__MINGW64__"
+        };
+        size_t extra_defines_cstrs_count = sizeof(extra_defines_cstrs) / sizeof(extra_defines_cstrs[0]);
+
+        if(extra_defines_cstrs_count != 6)
+            nob_log(WARNING, "extra_defines_cstrs_count %zu", extra_defines_cstrs_count);
+
+
+        // da_append_all(&extra_defines, "anther", "thing"); // idlike to make this work? is there anyway?
+        da_append_many(&extra_defines, extra_defines_cstrs, extra_defines_cstrs_count);
+        da_for(&extra_defines) {
+            sb_append_cstr(sb, "    \"");
+            sb_printf(sb, "-D%s", it);
+            nob_log(INFO, "define %s", it);
+            sb_printf(sb, "\"%s\n", comma);
+        }
+
+
     }
 
-    // skip first expects compiler ( we replace with "cc")
+    // Skip first expects compiler ( we replace with "cc")
     for (int i = 1; i < cmd.count; ++i) {
         char *ext = strrchr(cmd.items[i], '.');
         if (ext != NULL && strcmp(ext, ".c") == 0 ) {
@@ -118,34 +134,17 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, CStr_Array hfiles) {
         sb_printf(sb, "%s\n", comma);
     }
     sb_append_cstr(sb, "  }\n");
-
-
-
-// "   \"cc\",\n"
-// "   \"-c\",\n"
-// "   \"-std=c99\",\n"
-// "   \"-pedantic\",\n"
-// "   \"-Wall\",\n"
-// "   \"-Wno-unused-function\",\n"
-// "   \"-Wno-deprecated-declarations\",\n"
-// "   \"-Os\",\n"
-// "   \"-I/usr/X11R6/include\",\n"
-// "   \"-I/usr/include/freetype2\",\n"
-// "   \"-D_DEFAULT_SOURCE\",\n"
-// "   \"-D_BSD_SOURCE\",\n"
-// "   \"-D_XOPEN_SOURCE=700L\",\n"
-// "   \"-DVERSION=\\"6.4\"",\n"
-// "   \"-DXINERAMA\",\n"
-// "   \"util.c\"\n"
-
-
-
 }
 
 bool build_raylib() {
     bool result = true;
     Cmd cmd = {0};
     File_Paths object_files = {0};
+    File_Paths header_files = {0};
+    File_Paths c_files = {0};
+
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &header_files, true, nob_filter_by_extension, ".h");
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &c_files, true, nob_filter_by_extension, ".c");
 
     const char *build_path = RAYLIB_BUILD_DIR;
 
@@ -157,7 +156,7 @@ bool build_raylib() {
 
     for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
         const char *input_path =
-            temp_sprintf("./src/vendor/raylib/src/%s.c", raylib_modules[i]);
+            temp_sprintf(RAYLIB_SOURCE_DIR"/%s.c", raylib_modules[i]);
         const char *output_path =
             temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
         output_path =
@@ -165,7 +164,11 @@ bool build_raylib() {
 
         da_append(&object_files, output_path);
 
-        if (needs_rebuild(output_path, &input_path, 1)) {
+        if (
+            needs_rebuild(output_path, header_files.items, header_files.count)
+            || needs_rebuild(output_path, c_files.items, c_files.count)
+            || needs_rebuild(output_path, &input_path, 1)
+        ) {
             cmd.count = 0;
             cmd_append(&cmd, CC);
             cmd_append(&cmd, /* "-ggdb", */ "-DPLATFORM_DESKTOP", "-fPIC",
@@ -175,7 +178,7 @@ bool build_raylib() {
 #else
 #endif
 
-            cmd_append(&cmd, "-I./vendor/raylib/src/external/glfw/include");
+            cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR"external/glfw/include");
 
             cmd_append(&cmd, "-c", input_path);
             cmd_append(&cmd, "-o", output_path);
@@ -193,8 +196,7 @@ bool build_raylib() {
 
     const char *libraylib_path = temp_sprintf("%s/libraylib.a", build_path);
 
-    if (needs_rebuild(libraylib_path, object_files.items,
-                          object_files.count)) {
+    if (needs_rebuild(libraylib_path, object_files.items, object_files.count)) {
         cmd_append(&cmd, AR, "-crs", libraylib_path);
         for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
             const char *input_path =
@@ -234,17 +236,28 @@ bool build_cyber_player(const char *sources[]) {
     // OpenGL renderer is broken rn
     cmd_append(&cmd, "-DSOFTWARE_RENDERER");
     cmd_append(&cmd, "-D_REENTRANT");
-    // cmd_append(&cmd, "-O3");
-    // cmd_append(&cmd, "-Wall", "-Wextra", "-ggdb");
+    cmd_append(&cmd, "-DDEBUG");
+
+
+    cmd_append(&cmd,
+        // "-Wall",
+        // "-Wextra"
+    );
+    #if defined(DEBUG)
+        cmd_append(&cmd, "-O0", "-ggdb");
+    #elseif  defined(RELEASE)
+        cmd_append(&cmd, "-O3");
+    #endif
 
     // "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include","-I/usr/include/sysprof-6","-lglib-2.0"
-    cmd_append(&cmd, "-I.", "-I./src/include/","-I./vendor/raylib/src/", "-I./src/vendor/", "-pthread");
+    cmd_append(&cmd, "-I.", "-I./src/include/", "-I" RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-pthread");
     cmd_append(&cmd,  "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include" ,"-I/usr/include/sysprof-6", "-pthread","-lglib-2.0");
 
 
 
     cmd_append(&cmd, "-lmpv", "-lSDL2", "-lm", "-L./",
                    "-l:./" RAYLIB_BUILD_DIR "/libraylib.a", "-lpthread");
+
 #if defined(__MINGW64__)
     cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/usr/include/SDL2", "-I/mingw64/include");
     // cmd_append(&cmd, "-lglfw3");
@@ -267,9 +280,17 @@ bool build_cyber_player(const char *sources[]) {
 
 
 #if !defined(__MINGW64__)
-    CStr_Array hfiles = {0};
-    da_append(&hfiles, "./src/vendor/raygui.h");
-    da_append(&hfiles, "./nob.h");
+    File_Paths hfiles = {0};
+    // nob_read_entire_dir("./src/vendor/", &hfiles);
+    // nob_read_entire_dir("./", &hfiles);
+    read_entire_dir_filtered("./", &hfiles, true, nob_filter_by_extension, ".h");
+    read_entire_dir_filtered("./src/vendor/", &hfiles, true, nob_filter_by_extension, ".h");
+    read_entire_dir_filtered("./src/include", &hfiles, true, nob_filter_by_extension, ".h");
+
+    for (int i = 0; i < hfiles.count; ++i) {
+        char* ext = strrchr(hfiles.items[i], '.');
+        nob_log(INFO, "filtered file = `%s` with ext = %s", hfiles.items[i], ext);
+    }
 
     String_Builder sb = {0};
     sb_append_cstr(&sb, "[\n");

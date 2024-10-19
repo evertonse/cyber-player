@@ -5,7 +5,7 @@
 
 
 
-#define MAX_FILENAME_LENGTH 1024
+#define MAX_FILENAME_LENGTH 2048
 
 void player_unpause(void *ctx);
 

@@ -17,3 +17,5 @@ Is this useful?
 #!/usr/bin/sh
 make clean;make VERBOSE=y all &> /tmp/make_output.txt
 compiledb --parse /tmp/make_output.txt
+
+TODO: create variadic arguments

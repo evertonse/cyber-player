@@ -18,11 +18,15 @@ sync:
 	rsync \
 	--exclude '*.bin' --exclude '.cache/' --exclude '.cache/*' \
 	--exclude 'examples/' --exclude 'src/vendor/' --exclude '.git' --exclude '.build' -av \
-	. $(MINGW_CODE_DIR)
+	--include 'src/include/*' \
+	./* ./src/include/ $(MINGW_CODE_DIR)
 
 sync-full:
 	rsync --exclude '.git' --exclude '.build' -av \
+	--exclude '*.bin' \
+	--include 'src/include/*' \
 	. $(MINGW_CODE_DIR)
+
 
 
 

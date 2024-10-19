@@ -1,5 +1,7 @@
 ./nob
 .cache
+*.cache
+.cache/**
 nob
 nob.old
 nob.exe
@@ -11,6 +13,7 @@ nob.exe
 .bin/
 .bin
 *.bin
+*.bak
 .build/
 *.png
 *.out
