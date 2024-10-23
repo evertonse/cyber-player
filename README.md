@@ -4,6 +4,10 @@
     gcc nob.c -o nob && ./nob # Just compile once then you can just ./nob
 ```
 
+# Flags
+
+    https://github.com/EpicGamesExt/raddebugger/blob/master/build.sh
+
 # TODO
 - Start form where we left off
 

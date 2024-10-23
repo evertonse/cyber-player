@@ -7,7 +7,10 @@ DONE: Check if we currently clicking
 
 DONE: check if merge segments is actually correct
 
-TODO: Checkout Raygui
+DONE: Checkout Raygui
+
+TODO: Each Gui component has a bool group for interactivity
+TODO: make a Gui component for mpv
 
 TODO: Get first frame to be the thumb nail with option to save another image as thumb nail
 TODO: SQLite almagamation to store the data

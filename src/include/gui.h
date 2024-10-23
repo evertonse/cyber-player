@@ -11,6 +11,8 @@
 #define NOB_STRIP_PREFIX
 #include "nob.h"
 
+#include "header.h"
+
 #if defined(__cplusplus)
 extern "C" {            // Prevents name mangling of functions
 #endif
@@ -336,6 +338,109 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     #endif
 
     return ret;
+}
+// Draw progress bar background
+    
+int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, double duration, Segment current, double *percent_position, bool* seeking) {
+
+    double track_x = Remap(*percent_position, 0.0, 100.0, bounds.x, bounds.x + bounds.width);
+
+    const Color background        = GetColor(GuiGetStyle(DEFAULT,  BACKGROUND_COLOR));
+    // Color background        = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_NORMAL));
+    const Color backgroundFocused = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_FOCUSED));
+    const Color backgroundPressed = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_PRESSED));
+
+
+    Color fontColor        = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_NORMAL));
+    Color fontColorFocused = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_FOCUSED));
+    Color fontColorPressed = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_PRESSED));
+
+    double radius = 5.0;
+    Vector2 center = { track_x, bounds.y + bounds.height/2 };
+    Vector2 mouse_position = GetMousePosition();
+
+
+    double radius_hit_box = radius + 100;
+    bool is_mouse_on_cursor = CheckCollisionPointCircle(mouse_position, center, radius_hit_box);
+
+    int bar_hit_box_margin = 20;
+    Rectangle bar_hit_box = {bounds.x - bar_hit_box_margin, bounds.y - bar_hit_box_margin, bounds.width + 2*bar_hit_box_margin , bounds.height + 2*bar_hit_box_margin };
+    bool is_mouse_on_bar = CheckCollisionPointRec(mouse_position, bar_hit_box);
+
+
+    float alpha = 0.4;
+    DrawRectangleRounded(bounds, 1.0f, 36,  ColorAlpha(background, alpha));
+
+
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
+        (*seeking || is_mouse_on_cursor || is_mouse_on_bar)) {
+
+        *percent_position = (double)(mouse_position.x - bounds.x) / bounds.width;
+        *seeking = true;
+    } else {
+        *seeking = false;
+    }
+
+    // Merge overlapping segments
+    // merge_segments();
+
+    // Draw watched segments
+    if (duration > 0) {
+        for (int i = 0; i < segment_count; i++) {
+            int start_x =
+                bounds.x + (segments[i].start / duration) *
+                                      bounds.width;
+            int end_x =
+                bounds.x + (segments[i].end / duration) *
+                                      bounds.width;
+
+
+            DrawRectangleRounded(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, 1.0f, 36,  fontColorFocused);
+            // DrawRectangle(start_x, bounds.y, end_x - start_x, bounds.height, fontColorFocused);
+        }
+        int start_x = bounds.x + (current.start / duration) * bounds.width;
+        int end_x = bounds.x + (current.end / duration) * bounds.width;
+
+        if (start_x < end_x) {
+            DrawRectangleRounded(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, 1.0f, 36,  fontColorFocused);
+        }
+    }
+
+
+    DrawRectangle(track_x, bounds.y, 2, bounds.height, RED);
+
+    // DrawCircleV(center, radius+1.0,  background);
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    DrawCircleSector(center, radius+1.0, 0, 360, 120, background);
+
+    Color used = fontColor;
+    if (is_mouse_on_cursor) {
+        used = fontColorPressed;
+    } else if (is_mouse_on_bar) {
+        used = fontColorFocused;
+    } else {
+        // nothing
+    }
+
+    if (is_mouse_on_cursor || is_mouse_on_bar) {
+        DrawRectangle(
+            Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+            bounds.y, 2, bounds.height, RED);
+
+        float alpha = 0.4;
+        Vector2 new_center = {
+            Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+            center.y};
+        DrawCircleSector(new_center, radius, 0, 360, 120,
+                         ColorAlpha(background, alpha));
+        DrawCircleSector(new_center, radius - 1.0, 0, 360, 120,
+                         ColorAlpha(fontColorFocused, alpha));
+        // DrawRectangle(
+        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+        //     bounds.y, 2, bounds.height, RED);
+    }
+
+    DrawCircleV(center, radius, used);
 }
 
 #endif      // GUI_IMPLEMENTATION

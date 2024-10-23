@@ -75,7 +75,7 @@
 #define WINDOW_HEIGHT 900
 
 #define PROGRESS_BAR_WIDTH 200
-#define PROGRESS_BAR_HEIGHT 20
+#define PROGRESS_BAR_HEIGHT 5
 
 #define pthread_rwlock_rdlock(lock)
 #define pthread_rwlock_unlock(lock)
@@ -541,6 +541,7 @@ int main(int argc, char *argv[]) {
     pthread_mutex_init(render_update_mutex, NULL);
     pthread_rwlock_init(sc.rwlock, NULL);
     SetTraceLogLevel(DEFAULT_LOG_LEVEL);
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
 
     shdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
 
@@ -985,73 +986,29 @@ int main(int argc, char *argv[]) {
 
         // Draw progress bar background
         {
-            Rectangle playback_rect = {0, GetScreenHeight() - PROGRESS_BAR_HEIGHT, GetScreenWidth(), 40};
-            int playback_current_x = (int)((double)playback_rect.width) * (percent_position / 100);
-            DrawRectangle(playback_rect.x, playback_rect.y, playback_rect.width,
-                          playback_rect.height, BLACK);
+            int padding = 20;
+            Rectangle playback_rect = {
+                padding, GetScreenHeight() - PROGRESS_BAR_HEIGHT - padding,
+                GetScreenWidth() - 2*padding, PROGRESS_BAR_HEIGHT
+            };
+            double tracking_percent_position = percent_position;
+            Segment current = {sc.last_position, sc.segment_start};
+            int ret = GuiMoTrackingBar(playback_rect, sc.watched_segments,
+                                       sc.segment_count, sc.duration, current,
+                                       &tracking_percent_position, &seeking);
 
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
-                (seeking || CheckCollisionPointRec(mouse_position, playback_rect))) {
-                double new_playback_percentage =
-                    (double)(mouse_position.x - playback_rect.x) /
-                    playback_rect.width;
+            if (seeking == true) {
                 char temp[128];
                 snprintf(temp, sizeof(temp), "%f",
-                         new_playback_percentage * 100);
-                // const char *cmd_seek[] = {"seek", "10%","absolute", NULL};
+                         tracking_percent_position * 100);
                 const char *cmd_seek[] = {"seek", temp, "absolute-percent",
                                           "exact", NULL};
-                TRACE(LOG_INFO, "seek %s absolute\n", temp);
-                seeking = true;
-                bool sync = false;
-                if (sync) {
-                    mpv_command(mpv, cmd_seek);
-                } else {
-                    mpv_command_async(mpv, 420, cmd_seek);
-                }
-
-            } else {
-                seeking = false;
+                mpv_command_async(mpv, 420, cmd_seek);
+                // mpv_command(mpv, cmd_seek);
             }
 
             // Merge overlapping segments
             // merge_segments();
-
-            // Draw watched segments
-
-            if (sc.duration > 0) {
-                for (int i = 0; i < sc.segment_count; i++) {
-                    int start_x = playback_rect.x +
-                                  (sc.watched_segments[i].start / sc.duration) *
-                                      playback_rect.width;
-                    int end_x = playback_rect.x +
-                                (sc.watched_segments[i].end / sc.duration) *
-                                    playback_rect.width;
-                    DrawRectangle(start_x, playback_rect.y, end_x - start_x,
-                                  PROGRESS_BAR_HEIGHT, BLUE);
-                }
-                int start_x =
-                    playback_rect.x +
-                    (sc.segment_start / sc.duration) * playback_rect.width;
-                int end_x = playback_rect.x + (sc.last_position / sc.duration) *
-                                                  playback_rect.width;
-
-                if (start_x < end_x) {
-                    DrawRectangle(start_x, playback_rect.y, end_x - start_x,
-                                  PROGRESS_BAR_HEIGHT, BLUE);
-                }
-            }
-            // Draw current position
-            // if (duration > 0 && segment_control.last_position >= 0) {
-            //     int pos_x = playback_rect.x + (segment_control.last_position
-            //     / duration) * playback_rect.width;
-            //     // DrawRectangle(pos_x - 2, playback_rect.y, 4,
-            //     PROGRESS_BAR_HEIGHT
-            //     + 10, RED);
-            // }
-
-            DrawRectangle(playback_current_x, playback_rect.y, 2,
-                          playback_rect.height, RED);
         }
 
         {
@@ -1070,8 +1027,6 @@ int main(int argc, char *argv[]) {
                           ((volume / 100.0) * volume_width) - 2 * volume_pad,
                           (volume_height - 2 * volume_pad), GREEN);
         }
-
-
 
         if (draw_file_list) {
             const char **text = (const char **) mp4files.paths;
