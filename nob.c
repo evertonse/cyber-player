@@ -223,14 +223,25 @@ bool build_cyber_player(const char *sources[]) {
 
     // "sr.c", "progress.c";
 
+    const char * output_arg = NULL;
+
     const char *source = NULL;
     for (int i = 0; (source = sources[i]); ++i) {
+        if (sv_starts_with(sv_from_cstr(source), sv_from_cstr("-o"))) {
+            if(output_arg)  {
+                nob_log(ERROR, "Output path chosen twice first time `%s`, now ``.",output_arg, source);
+                exit(69);
+            }
+            output_arg = source;
+        }
         nob_log(INFO, "Appending Source `%s`\n", source);
         cmd_append(&cmd, source,);
     }
 
 
-    cmd_append(&cmd, temp_sprintf("-o%s/%s", BUILD_DIR, BIN));
+    if (output_arg == NULL)  {
+        cmd_append(&cmd, temp_sprintf("-o%s/%s", BUILD_DIR, BIN));
+    }
 
 
     // OpenGL renderer is broken rn
@@ -313,6 +324,7 @@ defer:
     return result;
 }
 
+
 int main(int argc, char **argv) {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
@@ -376,8 +388,12 @@ int main(int argc, char **argv) {
 
     if (!build_raylib()) return 1;
 
+    const char *test[] = {"./test.c", "-otest",  NULL};
+    if (!build_cyber_player(test)) return 1;
+
     const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
     if (!build_cyber_player(sources)) return 1;
+
 
     if (run) {
         Cmd cmd = {0};

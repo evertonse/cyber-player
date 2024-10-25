@@ -1238,6 +1238,16 @@ bool nob_sv_eq(Nob_String_View a, Nob_String_View b)
     }
 }
 
+// Does source (src) starts with a section
+bool nob_sv_starts_with(Nob_String_View src, Nob_String_View section)
+{
+    if (src.count < section.count) {
+        return false;
+    } else {
+        return memcmp(src.data, section.data, section.count) == 0;
+    }
+}
+
 // RETURNS:
 //  0 - file does not exists
 //  1 - file exists
@@ -1442,6 +1452,7 @@ int closedir(DIR *dirp)
         #define sv_trim_left nob_sv_trim_left
         #define sv_trim_right nob_sv_trim_right
         #define sv_eq nob_sv_eq
+        #define sv_starts_with nob_sv_starts_with
         #define sv_from_cstr nob_sv_from_cstr
         #define sv_from_parts nob_sv_from_parts
     #endif

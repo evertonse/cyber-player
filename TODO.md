@@ -15,6 +15,9 @@ TODO: make a Gui component for mpv
 TODO: Get first frame to be the thumb nail with option to save another image as thumb nail
 TODO: SQLite almagamation to store the data
 
+TODO: Add SCROLL_SLIDER_SIZE to the listview
+TODO: Add new option  SCROLL_SLIDER_WIDTH to the listview
+
 
 Is this useful?
 #!/usr/bin/sh

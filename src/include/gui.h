@@ -4,8 +4,10 @@
 #include <math.h>
 #include <stdint.h>
 #include <float.h>
-#include "raymath.h"
+#include <assert.h>
+
 #include "raylib.h"
+#include "raymath.h"
 
 
 #define NOB_STRIP_PREFIX
@@ -62,7 +64,7 @@ bool GuiMoPopup(Rectangle bounds, const char *message, double *time) {
 
 // Maybe considere SDF
 // https://www.raylib.com/examples/text/loader.html?name=text_font_sdf
-int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrollPercentage, int *active, int *focus, bool react)
+int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrollPercentage, int *active, int *focus, bool react, int scrollThicknes)
 {
     int ret = 0;
     assert(bounds.height > 0 && bounds.width > 0 && "check if this is the correct behaviour");
@@ -101,7 +103,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
         font_loaded = true;
 
         font = LoadFontEx("./assets/fonts/Alegreya-Regular.ttf", font_size, NULL, 0);
-        
+
         GenTextureMipmaps(&font.texture);
         SetTextureFilter(font.texture, TEXTURE_FILTER_TRILINEAR);
         item_height = vertical_spacing + MeasureTextEx(font, "_", font_size, horizontal_spacing).y;
@@ -141,7 +143,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     const Color backgroundFocused = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_FOCUSED));
     const Color backgroundPressed = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_PRESSED));
 
-    const int scrollBarWidth = 12;
+    const int scrollBarWidth = scrollThicknes;
     GuiDrawRectangle(bounds, borderWidth, borderColor, background);
 
 
@@ -211,7 +213,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
         // We take the floor because we wanna make
         // sure that we count ONLY FULLY visible items
         // If we see half of up or half down we do not count that
-        // that is considering correctly paned scroll, that is, default 
+        // that is considering correctly paned scroll, that is, default
         // position (when scrollPercentage.y is 0.0)
         ceil(bounds.height/item_height) + 1.0,
         (float)count
@@ -246,7 +248,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
         // Rectangle text_rect = {text_pos.x, text_pos.y, text_size.x, text_size.y};
         // Rectangle itemBounds = {bounds.x, text_pos.y, bounds.width, item_height};
         Rectangle itemBounds = {virtualBounds.x, text_pos.y, virtualBounds.width+textPaddingLeft-borderWidth, item_height};
-        
+
 
         Color usedTextColor = fontColor;
         Color usedBackgroundColor = transparent;
@@ -257,24 +259,32 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
         ) {
             foundActive = true;
 
-            usedTextColor       = fontColorFocused;
-            usedBackgroundColor = backgroundFocused;
-            usedBorderColor     = borderColorFocused;
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                *active = i;
-                usedTextColor       = fontColorPressed;
-                usedBackgroundColor = backgroundPressed;
-                usedBorderColor     = borderColorPressed;
-            }
-        } else {
 
-            if (i == *active) {
+
+            if (react ) {
+                *focus = i;
+                printf("focus=%d i=%d react=%d\n", *focus, i, react);
+                usedTextColor = fontColorFocused;
+                usedBackgroundColor = backgroundFocused;
+                usedBorderColor = borderColorFocused;
+                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    *active = i;
+                    usedTextColor = fontColorPressed;
+                    usedBackgroundColor = backgroundPressed;
+                    usedBorderColor = borderColorPressed;
+                }
+            } 
+
+                    usedTextColor = fontColorPressed;
+                    usedBackgroundColor = backgroundPressed;
+                    usedBorderColor = borderColorPressed;
+        } else {
+            if (i == *active || i == *focus) {
                 usedTextColor       = fontColorFocused;
                 usedBackgroundColor = backgroundFocused;
                 usedBorderColor     = borderColorFocused;
             }
         }
-
         GuiDrawRectangle(itemBounds, borderWidth, usedBorderColor, usedBackgroundColor);
         DrawTextEx(font, file_path, text_pos, font_size, horizontal_spacing, usedTextColor);
     }
@@ -303,7 +313,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
         }
     }
 
-    #ifdef DEBUG
+    #if false && defined(DEBUG)
     DrawTextEx(
         GetFontDefault(),
         tprintf(
@@ -339,8 +349,8 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
     return ret;
 }
+
 // Draw progress bar background
-    
 int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, double duration, Segment current, double *percent_position, bool* seeking) {
 
     double track_x = Remap(*percent_position, 0.0, 100.0, bounds.x, bounds.x + bounds.width);
@@ -360,7 +370,7 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     Vector2 mouse_position = GetMousePosition();
 
 
-    double radius_hit_box = radius + 100;
+    double radius_hit_box = radius + 15;
     bool is_mouse_on_cursor = CheckCollisionPointCircle(mouse_position, center, radius_hit_box);
 
     int bar_hit_box_margin = 20;
@@ -380,9 +390,6 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     } else {
         *seeking = false;
     }
-
-    // Merge overlapping segments
-    // merge_segments();
 
     // Draw watched segments
     if (duration > 0) {
@@ -423,9 +430,9 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     }
 
     if (is_mouse_on_cursor || is_mouse_on_bar) {
-        DrawRectangle(
-            Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
-            bounds.y, 2, bounds.height, RED);
+        // DrawRectangle(
+        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+        //     bounds.y, 2, bounds.height, RED);
 
         float alpha = 0.4;
         Vector2 new_center = {
@@ -441,6 +448,128 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     }
 
     DrawCircleV(center, radius, used);
+}
+
+
+int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_position, bool* seeking) {
+
+    if (!( *percent_position >= 0.0 && *percent_position <= max_percent_position )) {
+        printf("*percent_position=%f", *percent_position);
+        assert(0 && "panic!\n");
+    }
+    double x_position = Remap(*percent_position, 0.0, max_percent_position, bounds.x, bounds.x + bounds.width);
+
+    const Color background        = GetColor(GuiGetStyle(DEFAULT,  BACKGROUND_COLOR));
+    // Color background        = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_NORMAL));
+    const Color backgroundFocused = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_FOCUSED));
+    const Color backgroundPressed = GetColor(GuiGetStyle(LISTVIEW, BASE_COLOR_PRESSED));
+
+    Color fontColor        = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_NORMAL));
+    Color fontColorFocused = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_FOCUSED));
+    Color fontColorPressed = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_PRESSED));
+
+    double radius          = 5.0;
+    Vector2 center         = { x_position, bounds.y + bounds.height/2 };
+    Vector2 mouse_position = GetMousePosition();
+
+
+    double radius_hit_box = radius + 10;
+    bool is_mouse_on_cursor = CheckCollisionPointCircle(mouse_position, center, radius_hit_box);
+
+    int bar_hit_box_margin = 20;
+    Rectangle bar_hit_box = {bounds.x - bar_hit_box_margin, bounds.y - bar_hit_box_margin, bounds.width + 2*bar_hit_box_margin , bounds.height + 2*bar_hit_box_margin };
+    bool is_mouse_on_bar = CheckCollisionPointRec(mouse_position, bar_hit_box);
+
+    {  // Background Bar
+
+        float alpha = 0.4;
+        assert(max_percent_position >= 100.0);
+        Rectangle boundsNormalPart = {
+            bounds.x, bounds.y, Remap(100.0, 0.0, max_percent_position, 0.0, bounds.width), bounds.height
+        };
+
+        Rectangle boundsRedPart = {
+            boundsNormalPart.x + boundsNormalPart.width,
+            bounds.y,
+            Remap(max_percent_position - 100.0, 0.0, max_percent_position, 0.0, bounds.width),
+            bounds.height
+        };
+
+        // printf("boundsNormalPart = "REC_FMT"\n", REC_ARG(boundsNormalPart));
+        // printf("boundsRedPart = "REC_FMT"\n", REC_ARG(boundsRedPart));
+
+        Rectangle boundsPercent = {
+            bounds.x, bounds.y, Remap(*percent_position, 0.0, max_percent_position, 0.0, bounds.width), bounds.height
+        };
+
+        DrawRectangleRoundedGradientH(boundsNormalPart, 1.0f, 0.0f, 36, ColorAlpha(background, alpha), ColorAlpha(background, alpha));
+        DrawRectangleRoundedGradientH(boundsRedPart, 0.0f, 1.0f, 36, ColorAlpha(background, alpha), ColorAlpha(RED, alpha));
+        DrawRectangleRoundedGradientH(boundsPercent, 1.0f, 0.0f, 36, ColorAlpha(fontColorFocused, 0.95), ColorAlpha(fontColorFocused, 0.8));
+
+
+    }
+
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
+        (*seeking || is_mouse_on_cursor || is_mouse_on_bar)) {
+        double clampedMouseX = Clamp(mouse_position.x, bounds.x, bounds.x + bounds.width);
+        *percent_position = Remap(clampedMouseX,
+                                  bounds.x, bounds.x + bounds.width,
+                                  0.0 ,     max_percent_position);
+        *seeking = true;
+    } else {
+        *seeking = false;
+    }
+
+    Rectangle boundsPartial = bounds;
+    assert(x_position - bounds.x >= 0);
+    boundsPartial.width = x_position - bounds.x;
+
+    // DrawRectangleRounded(boundsPartial, 1.0f, 36,  ColorAlpha(fontColorFocused, alpha));
+    DrawRectangle(x_position, bounds.y, 2, bounds.height, RED);
+
+    // DrawCircleV(center, radius+1.0,  background);
+    SetConfigFlags(FLAG_MSAA_4X_HINT);
+    DrawCircleSector(center, radius+1.0, 0, 360, 120, background);
+
+    Color used;
+    if (is_mouse_on_cursor) {
+        used = fontColorPressed;
+    } else if (is_mouse_on_bar) {
+        used = fontColorFocused;
+    } else {
+        used = fontColor;
+    }
+
+    if (is_mouse_on_cursor || is_mouse_on_bar) {
+        // DrawRectangle(
+        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+        //     bounds.y, 2, bounds.height, RED);
+
+        float alpha = 0.4;
+        Vector2 new_center = {
+            Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+            center.y};
+        DrawCircleSector(new_center, radius, 0, 360, 120,
+                         ColorAlpha(background, alpha));
+        DrawCircleSector(new_center, radius - 1.0, 0, 360, 120,
+                         ColorAlpha(fontColorFocused, alpha));
+        // DrawRectangle(
+        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
+        //     bounds.y, 2, bounds.height, RED);
+    }
+
+    DrawCircleV(center, radius, used);
+}
+
+
+
+int GuiMoVolume(Rectangle bounds, double *percent_position, double max_percent_position, bool* seeking) {
+    Rectangle volumeIconBounds = bounds;
+    volumeIconBounds.width = Min(bounds.width/4, volumeIconBounds.height + 20);
+    bounds.x += volumeIconBounds.width;
+    bounds.width -= volumeIconBounds.width;
+
+    GuiMoSlider(bounds, percent_position, max_percent_position, seeking);
 }
 
 #endif      // GUI_IMPLEMENTATION

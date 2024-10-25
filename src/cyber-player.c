@@ -1017,28 +1017,69 @@ int main(int argc, char *argv[]) {
             const int volume_width = 200;
 
             // DrawRectangle(0, 0, 2, PROGRESS_BAR_HEIGHT/2, BLACK);
-            DrawRectangle(0, 0, ((150.0 / 100.0) * volume_width), volume_height,
-                          RED);
-            DrawRectangle(0, 0, ((120.0 / 100.0) * volume_width), volume_height,
-                          YELLOW);
-            DrawRectangle(0, 0, ((100.0 / 100.0) * volume_width), volume_height,
-                          BLACK);
-            DrawRectangle(volume_pad, volume_pad,
-                          ((volume / 100.0) * volume_width) - 2 * volume_pad,
-                          (volume_height - 2 * volume_pad), GREEN);
+            // DrawRectangle(0, 0, ((150.0 / 100.0) * volume_width), volume_height,
+            //               RED);
+            // DrawRectangle(0, 0, ((120.0 / 100.0) * volume_width), volume_height,
+            //               YELLOW);
+            // DrawRectangle(0, 0, ((100.0 / 100.0) * volume_width), volume_height, BLACK);
+            // DrawRectangle(volume_pad, volume_pad,
+            //               ((volume / 100.0) * volume_width) - 2 * volume_pad,
+            //               (volume_height - 2 * volume_pad), GREEN);
+
+            Rectangle volumeBounds = { 0, 0, ((100.0 / 100.0) * volume_width), volume_height };
+            static bool volumeSeek = false;
+            double volumePercentage = volume;
+            GuiMoVolume(volumeBounds, &volumePercentage, 130.0, &volumeSeek);
+            if (volumeSeek) {
+                player_set_volume(mpv, volumePercentage);
+            }
         }
 
+        static bool showMenu = false;
+
+        static Vector2 menu_scroll_percent = { 0 } ;
         if (draw_file_list) {
             const char **text = (const char **) mp4files.paths;
             int active_old = active;
             static Vector2 scroll_percentage = { 0 } ;
             float list_view_width = window_size.x/4;
-            int a = GuiMoListView(CLITERAL(Rectangle){window_size.x/6 - list_view_width/2, 20, list_view_width, window_size.y/1.5}, text, mp4files.count, &scroll_percentage, &active, &focus, true);
+            int a = GuiMoListView(
+                CLITERAL(Rectangle){window_size.x / 6 - list_view_width / 2, 20,
+                                    list_view_width, window_size.y / 1.5},
+                text, mp4files.count, &scroll_percentage, &active, &focus, !showMenu, 12);
             static bool done = false;
             if (active_old != active && active >= 0 && active < mp4files.count) {
                 player_load_file(mpv, mp4files.paths[active]);
             }
             assert(a == 0);
+
+            {
+                static Rectangle menuBounds = {0};
+
+                // Only check for menu if we're in file_list
+                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+                    menuBounds = CLITERAL(Rectangle){ mouse_position.x, mouse_position.y, 200, 70};
+                    showMenu = true;
+                }
+
+                int active = -1 , focus = 0;
+                if (showMenu) {
+                    const char *options[] = {"yank path", "huuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuge", "copy file", "copy file", "copy file"};
+                    int count = sizeof(options) / sizeof(options[0]);
+                    int a = GuiMoListView(
+                        menuBounds , options,
+                        count, &menu_scroll_percent, &active, &focus, true, 8);
+
+                    int hit_box_margin = 20;
+                    Rectangle men_hit_box = {menuBounds.x - hit_box_margin, menuBounds.y - hit_box_margin, menuBounds.width + 2*hit_box_margin , menuBounds.height + 2*hit_box_margin };
+                    bool is_mouse_on_menu_bar = CheckCollisionPointRec(mouse_position, men_hit_box);
+                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !is_mouse_on_menu_bar) {
+                        showMenu = false;
+                    }
+                }
+            }
+        } else {
+            showMenu = false;
         }
 
         int drop_box_active = true;

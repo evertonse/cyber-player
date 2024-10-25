@@ -5,6 +5,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#define REC_FMT "{ %.2f, %.2f, %.2f, %.2f }"
+#define REC_ARG(rec)  (rec).x, (rec).y, (rec).width, (rec).height
 
 
 #define MAX_FILENAME_LENGTH 2048
