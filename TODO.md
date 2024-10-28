@@ -15,8 +15,16 @@ TODO: make a Gui component for mpv
 TODO: Get first frame to be the thumb nail with option to save another image as thumb nail
 TODO: SQLite almagamation to store the data
 
-TODO: Add SCROLL_SLIDER_SIZE to the listview
+TODO: Fix Scrolling with small menus to the listview
+TODO: Make wheel speed change with stuff
+DONE: Add SCROLL_SLIDER_SIZE to the listview
 TODO: Add new option  SCROLL_SLIDER_WIDTH to the listview
+TODO: Fix Antialiasing Fxaa
+
+TODO: Add "add to favs" in menu
+TODO: Create List of Favs
+TODO: Create Copy path or open in explorer
+TODO: Resize on ui
 
 
 Is this useful?

@@ -17,14 +17,16 @@ MINGW_CODE_DIR := /mnt/c/msys64/home/Administrator/code/unamed-video
 sync:
 	rsync \
 	--exclude '*.bin' --exclude '.cache/' --exclude '.cache/*' \
-	--exclude 'examples/' --exclude 'src/vendor/' --exclude '.git' --exclude '.build' -av \
+	--exclude 'src/vendor/' --exclude '.git' --exclude '.build' -av \
 	--include 'src/include/*' \
+	--include './examples/*' \
 	./* ./src/include/ $(MINGW_CODE_DIR)
 
 sync-full:
 	rsync --exclude '.git' --exclude '.build' -av \
 	--exclude '*.bin' \
 	--include 'src/include/*' \
+	--include './examples/*' \
 	. $(MINGW_CODE_DIR)
 
 

@@ -13,7 +13,8 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "raygui.h"
+#include "resources.h"
+
 #define TRACE(level, ...) TraceLog(level, __VA_ARGS__)
 #define TRACEINFO(...) TraceLog(LOG_INFO, __VA_ARGS__)
 
@@ -40,8 +41,6 @@
 #include <pthread.h>
 
 
-#define GUI_IMPLEMENTATION
-#include <gui.h>
 
 
 #include "raylib.h"
@@ -51,7 +50,19 @@
 #include <string.h>
 #include <time.h>
 #include "header.h"
+
+#define GUI_IMPLEMENTATION
+#include "gui.h"
 // #include "rcore.h" // For debugginh purposes
+
+float get_value(float x, float lox, float hix) {
+    if (x < lox) x = lox;
+    if (x > hix) x = hix;
+    x -= lox;
+    x /= hix - lox;
+    return x;
+}
+
 
 #pragma clang diagnostic push
 // #pragma clang diagnostic ignored "-Wno-padded"
@@ -267,8 +278,8 @@ void player_load_file(void *ctx, const char *file_path) {
     for (int i = 0; i < shlen(file_progress_hash_map); ++i) {
         if (file_progress_hash_map[i].value != HASH_DOES_NOT_EXIST) {
             printf("\nvalue:%d | key:%s | found_idx:%d\n",
-               file_progress_hash_map[i].value, 
-               file_progress_hash_map[i].key, 
+               file_progress_hash_map[i].value,
+               file_progress_hash_map[i].key,
                index);
         }
     }
@@ -385,7 +396,12 @@ static void on_property_change(mpv_event_property *prop) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             double playback_time = *(double *)prop->data;
             double time_position = playback_time;
-            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, playback_time);
+            TRACE(
+                LOG_ERROR,
+                "Current %s:%.2f sc.segment_start:%.2f sc.last_position:%.2f\n",
+                prop->name, playback_time,
+                sc.segment_start, sc.last_position
+            );
 
             double start = sc.segment_start, last_position = sc.last_position;
             bool paused = sc.paused;
@@ -399,8 +415,9 @@ static void on_property_change(mpv_event_property *prop) {
                 goto playback_time_done;
             }
 
-            if (last_position < 0) {
+            if (last_position < 0, sc.segment_start < 0) {
                 sc.segment_start = time_position;
+                sc.last_position = time_position;
             } else if ((time_position < start)
                     || (fabs(time_position - last_position) > PLAYBACK_GAP_SIZE)) {
                 // Gap in playback, end current segment
@@ -534,15 +551,14 @@ bool IsKeyPressedOrRepeat(int key) {
 }
 
 static RenderTexture2D mpv_texture;
+static RenderTexture2D gui_texture;
 FilePathList mp4files;
 
 int main(int argc, char *argv[]) {
     pthread_mutex_init(event_wakeup_mutex, NULL);
     pthread_mutex_init(render_update_mutex, NULL);
     pthread_rwlock_init(sc.rwlock, NULL);
-    SetTraceLogLevel(DEFAULT_LOG_LEVEL);
     SetConfigFlags(FLAG_MSAA_4X_HINT);
-
     shdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
 
     int len = load_progress_data(FILE_PROGRESS, &file_progress_darray);
@@ -652,7 +668,21 @@ int main(int argc, char *argv[]) {
         printf("%s\n", mp4files.paths[i]);
     }
 
+    // SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
+
+    RenderTexture2D target = LoadRenderTexture(GetScreenWidth(), GetScreenHeight());
+
+    // SetTextureFilter(target.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
+    // GenTextureMipmaps(&target.texture);
+
+    // Shader fxaaShader = LoadShader(0, "./res/shaders/fxaa-thebennybox.fs");
+    Shader fxaaShader = LoadShader(NULL, "./res/shaders/fxaa.fs");
+    // Shader fxaaShader = LoadShader(NULL, NULL);
+    // Shader shader = LoadShaderFromMemory(NULL, fxaaShader);
+    // Shader shader = LoadShader("./res/shaders/base.vs", "./res/shaders/predator.fs");
+
+
 
     // Custom file dialog
     GuiWindowFileDialogState fileDialogState = InitGuiWindowFileDialog(GetWorkingDirectory());
@@ -662,9 +692,11 @@ int main(int argc, char *argv[]) {
 #define FONT_SIZE (40/2)
 
     Font jetbrains = LoadFontEx(
-        "./assets/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
+        "./res/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
     GenTextureMipmaps(&jetbrains.texture);
     SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
+
+
     // FILTER_TRILINEAR requires generated mipmaps
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
     // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
@@ -672,21 +704,19 @@ int main(int argc, char *argv[]) {
     GuiSetStyle(LISTVIEW, TEXT_ALIGNMENT, TEXT_ALIGN_LEFT);
     GuiSetStyle(DEFAULT, TEXT_SIZE, FONT_SIZE);
 
+
     mpv_texture = LoadRenderTexture(WINDOW_WIDTH, WINDOW_HEIGHT);
 
     SetWindowState(
-        FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN | FLAG_WINDOW_HIGHDPI
+        FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN
         // support mouse passthrough, only supported when
         | FLAG_WINDOW_UNDECORATED
         // FLAG_WINDOW_MOUSE_PASSTHROUGH
         | FLAG_VSYNC_HINT
-
-        | FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT
         // run program in borderless windowed mode
         // | FLAG_BORDERLESS_WINDOWED_MODE
     );
 
-    SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_INTERLACED_HINT);
 
     TRACE(LOG_INFO, "Screen Size %dx%d", GetScreenWidth(), GetScreenHeight());
 
@@ -752,6 +782,19 @@ int main(int argc, char *argv[]) {
     Image image = {NULL, WINDOW_WIDTH, WINDOW_HEIGHT, 1,
                    PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
     Texture tex = LoadTextureFromImage(image);
+
+    Image shapesImage = {NULL, WINDOW_WIDTH*4, WINDOW_HEIGHT*4, 1,
+                   PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    Texture shapesTexture = LoadTextureFromImage(shapesImage);
+
+    if (true) {
+        // GenTextureMipmaps(&shapesTexture);
+        // SetTextureFilter(shapesTexture, TEXTURE_FILTER_TRILINEAR);
+        // SetTextureFilter(shapesTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
+
+        // SetShapesTexture(shapesTexture, GetShapesTextureRectangle());
+
+    }
     UnloadImage(image);
 
     printf("Loaded Texture just fine\n");
@@ -806,8 +849,12 @@ int main(int argc, char *argv[]) {
             fileDialogState.SelectFilePressed = false;
         }
 
-        BeginDrawing();
-        EndTextureMode();
+        int resolutionLoc = GetShaderLocation(fxaaShader, "resolution");
+        // Vector2 resolution = { (float)GetScreenWidth(), (float)GetScreenHeight() };
+        Vector2 resolution = { (float)target.texture.width, (float)target.texture.height};
+        SetShaderValue(fxaaShader, resolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
+
+        BeginTextureMode(target);
         ClearBackground(BLACK);
 
         Vector2 mouse_position  = GetMousePosition();
@@ -816,7 +863,7 @@ int main(int argc, char *argv[]) {
         Vector2 window_position = GetWindowPosition();
         Vector2 mouse_delta     = GetMouseDelta();
 
-        TRACE(LOG_INFO, "mouse_wheel = {%f, %f};", mouse_wheel.x,
+        TRACE(LOG_TRACE, "mouse_wheel = {%f, %f};", mouse_wheel.x,
               mouse_wheel.y);
 
         if (IsKeyPressedOrRepeat(KEY_LEFT)) {
@@ -938,6 +985,11 @@ int main(int argc, char *argv[]) {
 
 #endif
         }
+
+        if (mouse_position.x > GetScreenWidth() / 1.4) {
+            draw_file_list = false;
+        }
+#if defined(SOFTWARE_RENDERER)
         // Create a texture from the RGBA pixel data
         //
         // TODO: Change to UpdateTexture in a way that it works with
@@ -949,17 +1001,14 @@ int main(int argc, char *argv[]) {
         // image.height}, image.data);
         //
 
-        if (mouse_position.x > GetScreenWidth() / 1.4) {
-            draw_file_list = false;
-        }
-#if defined(SOFTWARE_RENDERER)
-        tex = LoadTextureFromImage(image);
+        // tex = LoadTextureFromImage(image);
+        UpdateTextureRec(tex, CLITERAL(Rectangle){0, 0, image.width, image.height}, image.data);
         // Draw video texture
         if (mouse_position.x < 20) {
             DrawTextureEx(
                 tex,
                 CLITERAL(Vector2){GetScreenWidth() * 0.5,
-                                  GetScreenHeight() * 0.5 - (tex.height)},
+                                  GetScreenHeight() * 0.5 - (tex.height/2)},
                 0, 0.5, RAYWHITE);
             draw_file_list = true;
         } else {
@@ -977,7 +1026,11 @@ int main(int argc, char *argv[]) {
         TRACE(LOG_TRACE, "mouse_pos = {%d %d};\n", (int)mouse_position.x,
               (int)mouse_position.y);
 
-        DrawCircle((int)mouse_position.x, (int)mouse_position.y, 4, RED);
+        {
+            float alpha = 2.0;
+            GuiMoDrawCircle(mouse_position, 5.f, 1.0, ColorAlpha(WHITE, alpha), ColorAlpha(RED, alpha));
+        }
+
 
         snprintf(fps, sizeof(fps), " %d fps", GetFPS());
         SetWindowTitle(fps);
@@ -992,11 +1045,30 @@ int main(int argc, char *argv[]) {
                 GetScreenWidth() - 2*padding, PROGRESS_BAR_HEIGHT
             };
             double tracking_percent_position = percent_position;
-            Segment current = {sc.last_position, sc.segment_start};
-            int ret = GuiMoTrackingBar(playback_rect, sc.watched_segments,
-                                       sc.segment_count, sc.duration, current,
-                                       &tracking_percent_position, &seeking);
+            Segment current = {sc.segment_start, sc.last_position};
 
+
+            DrawRectangleRec(Pad(playback_rect, 2.0), Fade(BLACK, 0.3));
+
+
+
+            if (false) { // test
+
+                BeginTextureMode(target);
+                    ClearBackground(BLANK); // BLANK is (0,0,0,0) - fully transparent
+                    // Draw only where you want content, the rest stays transparent
+
+                    Rectangle bounds = {100, 100, 200, 150};
+                    DrawRectangleRec(bounds, ColorAlpha(BLUE, 0.5f)); // Semi-transparent blue
+                    DrawCircle(GetMouseX(), GetMouseY(), 20, RED);
+
+                    bounds.x += bounds.width;
+                    DrawRectangleRec(bounds, ColorAlpha(BLACK, 0.5f)); // Semi-transparent blue
+                EndTextureMode();
+            }
+            int ret = GuiMoTrackingBar(playback_rect, sc.watched_segments,
+                                           sc.segment_count, sc.duration, current,
+                                           &tracking_percent_position, &seeking);
             if (seeking == true) {
                 char temp[128];
                 snprintf(temp, sizeof(temp), "%f",
@@ -1039,16 +1111,20 @@ int main(int argc, char *argv[]) {
 
         static Vector2 menu_scroll_percent = { 0 } ;
         if (draw_file_list) {
-            const char **text = (const char **) mp4files.paths;
+            const char **text = (const char **)mp4files.paths;
             int active_old = active;
-            static Vector2 scroll_percentage = { 0 } ;
-            float list_view_width = window_size.x/4;
-            int a = GuiMoListView(
+            static Vector2 scroll_percentage = {0};
+            float list_view_width = window_size.x / 4;
+            Rectangle filesBounds =
                 CLITERAL(Rectangle){window_size.x / 6 - list_view_width / 2, 20,
-                                    list_view_width, window_size.y / 1.5},
-                text, mp4files.count, &scroll_percentage, &active, &focus, !showMenu, 12);
-            static bool done = false;
-            if (active_old != active && active >= 0 && active < mp4files.count) {
+                                    list_view_width, window_size.y / 1.5};
+
+            int a = GuiMoListView(filesBounds, text, mp4files.count,
+                                  &scroll_percentage, &active, &focus,
+                                  !showMenu, 12);
+            static bool donel = false;
+            if (active_old != active && active >= 0 &&
+                active < mp4files.count) {
                 player_load_file(mpv, mp4files.paths[active]);
             }
             assert(a == 0);
@@ -1057,23 +1133,36 @@ int main(int argc, char *argv[]) {
                 static Rectangle menuBounds = {0};
 
                 // Only check for menu if we're in file_list
-                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+                if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)
+                    && CheckCollisionPointRec(mouse_position, filesBounds)
+                ) {
                     menuBounds = CLITERAL(Rectangle){ mouse_position.x, mouse_position.y, 200, 70};
                     showMenu = true;
                 }
 
-                int active = -1 , focus = 0;
+                int active = -1, focus = 0;
                 if (showMenu) {
-                    const char *options[] = {"yank path", "huuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuge", "copy file", "copy file", "copy file"};
+                    const char *options[] = {
+                        "yank path", "huuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuge",
+                        "copy file", "copy file", "copy file"
+                    };
                     int count = sizeof(options) / sizeof(options[0]);
-                    int a = GuiMoListView(
-                        menuBounds , options,
-                        count, &menu_scroll_percent, &active, &focus, true, 8);
+                    // SCROLL_SLIDER_SIZE
+                    GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, menuBounds.height/count);
+                    int a = GuiMoListView(menuBounds, options, count,
+                                          &menu_scroll_percent, &active, &focus,
+                                          true, 8);
 
                     int hit_box_margin = 20;
-                    Rectangle men_hit_box = {menuBounds.x - hit_box_margin, menuBounds.y - hit_box_margin, menuBounds.width + 2*hit_box_margin , menuBounds.height + 2*hit_box_margin };
-                    bool is_mouse_on_menu_bar = CheckCollisionPointRec(mouse_position, men_hit_box);
-                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !is_mouse_on_menu_bar) {
+                    Rectangle men_hit_box = {
+                        menuBounds.x - hit_box_margin,
+                        menuBounds.y - hit_box_margin,
+                        menuBounds.width + 2 * hit_box_margin,
+                        menuBounds.height + 2 * hit_box_margin};
+                    bool is_mouse_on_menu_bar =
+                        CheckCollisionPointRec(mouse_position, men_hit_box);
+                    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+                        !is_mouse_on_menu_bar) {
                         showMenu = false;
                     }
                 }
@@ -1085,7 +1174,7 @@ int main(int argc, char *argv[]) {
         int drop_box_active = true;
         // GuiDropdownBox(CLITERAL(Rectangle){0,0, 200, 200}, "kkkkkkkkkkkk", &drop_box_active, true);
         // GuiScrollBar(CLITERAL(Rectangle){200, 200, 400, 400},29, 19, 13);
-        TRACE(LOG_INFO, "scrollIndex = %d, active = %d, focus = %d", scrollIndex, active, focus);
+        TRACE(LOG_TRACE, "scrollIndex = %d, active = %d, focus = %d", scrollIndex, active, focus);
         {
             static int show = false;
             Rectangle bounds = {window_size.x/2-100, window_size.y/2-100, 200, 200};
@@ -1145,7 +1234,7 @@ int main(int argc, char *argv[]) {
         GuiWindowFileDialog(&fileDialogState);
 
         if (fileDialogState.SelectFilePressed) {
-            if (IsFileExtension(fileDialogState.fileNameText, ".mp4") 
+            if (IsFileExtension(fileDialogState.fileNameText, ".mp4")
                 || IsFileExtension(fileDialogState.fileNameText, ".mkv")
             ) {
                 strcpy(fileNameToLoad, TextFormat("%s" PATH_SEPERATOR "%s", fileDialogState.dirPathText, fileDialogState.fileNameText));
@@ -1155,8 +1244,22 @@ int main(int argc, char *argv[]) {
             fileDialogState.SelectFilePressed = false;
         }
 
-        nob_temp_reset();
-        EndDrawing();
+        static float horz_value = 0.2;
+        static bool  horz_dragging = false;
+
+    EndTextureMode();
+
+    BeginDrawing();
+        // BeginShaderMode(fxaaShader);
+        DrawTextureRec(target.texture,
+                      (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height },
+                      (Vector2){ 0, 0 },
+                      WHITE);  // WHITE preserves alpha channel
+        // EndShaderMode();
+
+    EndDrawing();
+    nob_temp_reset();
+
     }
 
 done:

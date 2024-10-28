@@ -1,5 +1,4 @@
-#ifndef RAYGUI_MO_H
-#define RAYGUI_MO_H
+#pragma once
 
 #include <math.h>
 #include <stdint.h>
@@ -8,6 +7,7 @@
 
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 
 
 #define NOB_STRIP_PREFIX
@@ -22,11 +22,15 @@ extern "C" {            // Prevents name mangling of functions
 // int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrollIndex, int *active, int *focus);
 
 
+float get_value(float x, float lox, float hix);
+bool GuiMoHorzSlider(Rectangle bounds, float *value, bool *dragging);
+int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_position, bool* seeking);
+void GuiMoDrawCircle(Vector2 center, float radius, int borderWidth, Color border, Color color);
+
 #if defined(__cplusplus)
 }            // Prevents name mangling of functions
 #endif
 
-#endif // RAYGUI_MO_H
 
 
 #if defined(GUI_IMPLEMENTATION)
@@ -40,13 +44,50 @@ extern "C" {            // Prevents name mangling of functions
 #define RAYGUI_IMPLEMENTATION
 #include "raygui.h"
 
+const int circleSegments = 360;
+
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <math.h>               // Required for: roundf() [GuiColorPicker()]
+#include <math.h>
 
+
+Rectangle MiddleOf(Rectangle source, float width, float height) {
+    return CLITERAL(Rectangle){
+        source.x + source.width/2.0 - width/2.0,
+        source.y + source.height/2.0 - height/2.0,
+        width, height
+    };
+}
+
+Vector2 MiddleOfV(Rectangle source) {
+    return CLITERAL(Vector2){
+        source.x + source.width/2.0,
+        source.y + source.height/2.0
+    };
+}
+
+Rectangle PadV(Rectangle bounds, const Vector4 padding) {
+    Rectangle boundsWithPadding = {
+        bounds.x + padding.x,
+        bounds.y + padding.y,
+        bounds.width - (padding.z + padding.x),
+        bounds.height - (padding.w + padding.y)
+    };
+    return boundsWithPadding;
+}
+
+Rectangle Pad(Rectangle bounds, float padding) {
+    Rectangle boundsWithPadding = {
+        bounds.x + padding,
+        bounds.y + padding,
+        bounds.width - (padding + padding),
+        bounds.height - (padding + padding)
+    };
+    return boundsWithPadding;
+}
 
 // return if it's done
 bool GuiMoPopup(Rectangle bounds, const char *message, double *time) {
@@ -78,11 +119,13 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     }
     // TODO: Fix to visible items stuff
     assert(scrollPercentage);
-    scrollPercentage->y -= ((mouse_wheel.y*whell_speed)/bounds.y);
-    scrollPercentage->y  = Clamp(scrollPercentage->y, 0, 1.0);
+    if (react) {
+        scrollPercentage->y -= ((mouse_wheel.y*whell_speed)/bounds.y);
+        scrollPercentage->y  = Clamp(scrollPercentage->y, 0, 1.0);
 
-    scrollPercentage->x -= ((mouse_wheel.x*whell_speed)/bounds.x);
-    scrollPercentage->x  = Clamp(scrollPercentage->x, 0, 1.0);
+        scrollPercentage->x -= ((mouse_wheel.x*whell_speed)/bounds.x);
+        scrollPercentage->x  = Clamp(scrollPercentage->x, 0, 1.0);
+    }
 
 
 
@@ -102,7 +145,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     if (font_loaded == false) {
         font_loaded = true;
 
-        font = LoadFontEx("./assets/fonts/Alegreya-Regular.ttf", font_size, NULL, 0);
+        font = LoadFontEx("./res/fonts/Alegreya-Regular.ttf", font_size, NULL, 0);
 
         GenTextureMipmaps(&font.texture);
         SetTextureFilter(font.texture, TEXTURE_FILTER_TRILINEAR);
@@ -263,7 +306,6 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
             if (react ) {
                 *focus = i;
-                printf("focus=%d i=%d react=%d\n", *focus, i, react);
                 usedTextColor = fontColorFocused;
                 usedBackgroundColor = backgroundFocused;
                 usedBorderColor = borderColorFocused;
@@ -273,7 +315,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
                     usedBackgroundColor = backgroundPressed;
                     usedBorderColor = borderColorPressed;
                 }
-            } 
+            }
 
                     usedTextColor = fontColorPressed;
                     usedBackgroundColor = backgroundPressed;
@@ -291,15 +333,16 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
     EndScissorMode();
 
-    const int scrollScale = INT32_MAX/2;
+    const int scrollScale = INT32_MAX/4;
     // const int scrollScale = count-visibleItemsCount;
     // const int scrollScale = count;
     // const int scrollScale = bounds.height;
     // const int scrollScale = scrollBarBounds.height;
     int scrollResult = 0;
     if (useVerticalScrollBar) {
+        GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, scrollBarBounds.height/(virtualBounds.height/scrollBarBounds.height));
         scrollResult = GuiScrollBar(scrollBarBounds, scrollPercentage->y * (float)scrollScale, 0, scrollScale);
-        if (mouse_wheel.y == 0) {
+        if (react && mouse_wheel.y == 0) {
             scrollPercentage->y = (float)scrollResult/scrollScale;
         }
     } else {
@@ -307,8 +350,9 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     }
 
     if (useHorizontalScrollBar) {
+        GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, scrollBarBoundsHorz.width/(virtualBounds.width/scrollBarBoundsHorz.width));
         scrollResult = GuiScrollBar(scrollBarBoundsHorz, scrollPercentage->x * (float)scrollScale, 0, scrollScale);
-        if (mouse_wheel.y == 0) {
+        if (react && mouse_wheel.y == 0) {
             scrollPercentage->x = (float)scrollResult/scrollScale;
         }
     }
@@ -350,6 +394,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     return ret;
 }
 
+#define RADIUS 0.8
 // Draw progress bar background
 int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, double duration, Segment current, double *percent_position, bool* seeking) {
 
@@ -365,7 +410,7 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     Color fontColorFocused = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_FOCUSED));
     Color fontColorPressed = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_PRESSED));
 
-    double radius = 5.0;
+    double radius = RADIUS;
     Vector2 center = { track_x, bounds.y + bounds.height/2 };
     Vector2 mouse_position = GetMousePosition();
 
@@ -379,7 +424,7 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
 
 
     float alpha = 0.4;
-    DrawRectangleRounded(bounds, 1.0f, 36,  ColorAlpha(background, alpha));
+    DrawRectangleRec(bounds, ColorAlpha(background, alpha));
 
 
     if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) &&
@@ -402,23 +447,20 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
                                       bounds.width;
 
 
-            DrawRectangleRounded(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, 1.0f, 36,  fontColorFocused);
+            DrawRectangleRec(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, fontColorFocused);
             // DrawRectangle(start_x, bounds.y, end_x - start_x, bounds.height, fontColorFocused);
         }
         int start_x = bounds.x + (current.start / duration) * bounds.width;
         int end_x = bounds.x + (current.end / duration) * bounds.width;
 
         if (start_x < end_x) {
-            DrawRectangleRounded(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, 1.0f, 36,  fontColorFocused);
+            DrawRectangleRec(CLITERAL(Rectangle){ start_x, bounds.y, end_x - start_x, bounds.height }, fontColorFocused);
         }
     }
 
 
     DrawRectangle(track_x, bounds.y, 2, bounds.height, RED);
 
-    // DrawCircleV(center, radius+1.0,  background);
-    SetConfigFlags(FLAG_MSAA_4X_HINT);
-    DrawCircleSector(center, radius+1.0, 0, 360, 120, background);
 
     Color used = fontColor;
     if (is_mouse_on_cursor) {
@@ -430,25 +472,18 @@ int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, dou
     }
 
     if (is_mouse_on_cursor || is_mouse_on_bar) {
-        // DrawRectangle(
-        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
-        //     bounds.y, 2, bounds.height, RED);
-
         float alpha = 0.4;
         Vector2 new_center = {
-            Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
-            center.y};
-        DrawCircleSector(new_center, radius, 0, 360, 120,
-                         ColorAlpha(background, alpha));
-        DrawCircleSector(new_center, radius - 1.0, 0, 360, 120,
-                         ColorAlpha(fontColorFocused, alpha));
-        // DrawRectangle(
-        //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
-        //     bounds.y, 2, bounds.height, RED);
+            Clamp(mouse_position.x, bounds.x, bounds.x + bounds.width),
+            center.y
+        };
+
+        GuiMoDrawCircle(new_center, radius, 1.0, ColorAlpha(background, alpha), ColorAlpha(fontColorFocused, alpha));
     }
 
-    DrawCircleV(center, radius, used);
+    GuiMoDrawCircle(center, radius, 1.0, background, used);
 }
+
 
 
 int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_position, bool* seeking) {
@@ -468,7 +503,7 @@ int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_p
     Color fontColorFocused = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_FOCUSED));
     Color fontColorPressed = GetColor(GuiGetStyle(LISTVIEW, TEXT_COLOR_PRESSED));
 
-    double radius          = 5.0;
+    double radius = RADIUS;
     Vector2 center         = { x_position, bounds.y + bounds.height/2 };
     Vector2 mouse_position = GetMousePosition();
 
@@ -502,9 +537,9 @@ int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_p
             bounds.x, bounds.y, Remap(*percent_position, 0.0, max_percent_position, 0.0, bounds.width), bounds.height
         };
 
-        DrawRectangleRoundedGradientH(boundsNormalPart, 1.0f, 0.0f, 36, ColorAlpha(background, alpha), ColorAlpha(background, alpha));
-        DrawRectangleRoundedGradientH(boundsRedPart, 0.0f, 1.0f, 36, ColorAlpha(background, alpha), ColorAlpha(RED, alpha));
-        DrawRectangleRoundedGradientH(boundsPercent, 1.0f, 0.0f, 36, ColorAlpha(fontColorFocused, 0.95), ColorAlpha(fontColorFocused, 0.8));
+        DrawRectangleRoundedGradientH(boundsNormalPart, 0.0f, 0.0f, 36, ColorAlpha(background, alpha), ColorAlpha(background, alpha));
+        DrawRectangleRoundedGradientH(boundsRedPart, 0.0f, 0.0f, 36, ColorAlpha(background, alpha), ColorAlpha(RED, alpha));
+        DrawRectangleRoundedGradientH(boundsPercent, 0.0f, 0.0f, 36, ColorAlpha(fontColorFocused, 0.95), ColorAlpha(fontColorFocused, 0.8));
 
 
     }
@@ -524,12 +559,8 @@ int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_p
     assert(x_position - bounds.x >= 0);
     boundsPartial.width = x_position - bounds.x;
 
-    // DrawRectangleRounded(boundsPartial, 1.0f, 36,  ColorAlpha(fontColorFocused, alpha));
     DrawRectangle(x_position, bounds.y, 2, bounds.height, RED);
 
-    // DrawCircleV(center, radius+1.0,  background);
-    SetConfigFlags(FLAG_MSAA_4X_HINT);
-    DrawCircleSector(center, radius+1.0, 0, 360, 120, background);
 
     Color used;
     if (is_mouse_on_cursor) {
@@ -549,27 +580,97 @@ int GuiMoSlider(Rectangle bounds, double *percent_position, double max_percent_p
         Vector2 new_center = {
             Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
             center.y};
-        DrawCircleSector(new_center, radius, 0, 360, 120,
-                         ColorAlpha(background, alpha));
-        DrawCircleSector(new_center, radius - 1.0, 0, 360, 120,
-                         ColorAlpha(fontColorFocused, alpha));
+        GuiMoDrawCircle(new_center, radius, 1.0, ColorAlpha(background, alpha), ColorAlpha(fontColorFocused, alpha));
         // DrawRectangle(
         //     Min(Max(mouse_position.x, bounds.x), bounds.x + bounds.width),
         //     bounds.y, 2, bounds.height, RED);
     }
 
-    DrawCircleV(center, radius, used);
+    GuiMoDrawCircle(center, radius, 1.0, background, used);
 }
 
 
+int GuiMoVolumeIcon(Rectangle bounds, double pecent, double max_percent) {
+    Vector2 p0 = { bounds.x, bounds.y + bounds.height/2};
+    Vector2 p1 = { bounds.x + bounds.width, bounds.y};
+    Vector2 p2 = { bounds.x + bounds.width, bounds.y + bounds.height};
+    
+    DrawTriangle(p0, p1, p2, RED);
+    // DrawLineBezier(p0, p1, 2, RED);
+}
 
 int GuiMoVolume(Rectangle bounds, double *percent_position, double max_percent_position, bool* seeking) {
     Rectangle volumeIconBounds = bounds;
     volumeIconBounds.width = Min(bounds.width/4, volumeIconBounds.height + 20);
     bounds.x += volumeIconBounds.width;
     bounds.width -= volumeIconBounds.width;
+    GuiMoVolumeIcon(volumeIconBounds, *percent_position, max_percent_position);
 
     GuiMoSlider(bounds, percent_position, max_percent_position, seeking);
 }
+
+void GuiMoDrawCircle(Vector2 center, float radius, int borderWidth, Color border, Color color) {
+    static const char* circle_src =
+    "   #version 330                                                                        \n"
+    "   in vec2 fragTexCoord;                                                               \n"
+    "   in vec4 fragColor;                                                                  \n"
+    "   out vec4 finalColor;                                                                \n"
+    "   void main() {                                                                       \n"
+    "       float usedPower = 1.02f;                                                        \n"
+    "       float r = 0.40;                                                                 \n"
+    // "       float usedPower = 1.95f;                                                        \n"
+    // "       float r = 0.30;                                                                 \n"
+    "       vec2 p = fragTexCoord - vec2(0.5);                                              \n"
+    "       if (length(p) <= 0.5) {                                                         \n"
+    "           float s = length(p) - r;                                                    \n"
+    "           if (s <= 0) {                                                               \n"
+    "               finalColor = fragColor * 1.5;                                           \n"
+    "           } else {                                                                    \n"
+    "               float t = 1 - s / (0.5 - r);                                            \n"
+    "               finalColor =                                                            \n"
+    "                   mix(vec4(fragColor.xyz, 0), fragColor * 1.5, pow(t, usedPower));    \n"
+    "           }                                                                           \n"
+    "       } else {                                                                        \n"
+    "           finalColor = vec4(0);                                                       \n"
+    "       }                                                                               \n"
+    "   }                                                                                   \n";
+    static Shader circle = { 0 };
+    if (!IsShaderReady(circle)) {
+        circle = LoadShaderFromMemory(0, circle_src);
+        assert(IsShaderReady(circle));
+    }
+    
+
+    BeginShaderMode(circle);
+    Rectangle source  = {0, 0, 1, 1};
+    Texture2D texture = {rlGetTextureIdDefault(), source.width, source.height, 1, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    Vector2   origin  = {0, 0};
+
+    {
+        {
+            Rectangle dest = {
+                center.x - radius,
+                center.y - radius,
+                radius * 2,
+                radius * 2
+            };
+            DrawTexturePro(texture, source, dest, origin, 0, border);
+        }
+        {
+            Rectangle dest = {center.x - (radius - borderWidth),
+                              center.y - (radius - borderWidth),
+                              (radius - borderWidth) * 2,
+                              (radius - borderWidth) * 2
+            };
+            DrawTexturePro(texture, source, dest, origin, 0, color);
+        }
+    }
+
+    EndShaderMode();
+}
+
+
+
+
 
 #endif      // GUI_IMPLEMENTATION

@@ -89,22 +89,22 @@
 #    include <windows.h>
 #    include <direct.h>
 #    include <shellapi.h>
-#    define PATH_SEPARATOR "\\"
-#    define PATH_SEPARATOR_CHAR '\\'
 #else
 #    include <sys/types.h>
 #    include <sys/wait.h>
 #    include <sys/stat.h>
 #    include <unistd.h>
 #    include <fcntl.h>
-#    define PATH_SEPARATOR "/"
-#    define PATH_SEPARATOR_CHAR '/'
 #endif
 
 #ifdef _WIN32
+#    define PATH_SEPARATOR "\\"
+#    define PATH_SEPARATOR_CHAR '\\'
 #    define NOB_LINE_END "\r\n"
 #else
 #    define NOB_LINE_END "\n"
+#    define PATH_SEPARATOR "/"
+#    define PATH_SEPARATOR_CHAR '/'
 #endif
 
 #define NOB_UNUSED(value) (void)(value)
@@ -148,12 +148,24 @@ typedef enum {
     NOB_FILE_OTHER,
 } Nob_File_Type;
 
+// Type definition for the filter callback
+typedef bool (*Nob_File_Filter)(const char *path, void *user_data);
+
 bool nob_mkdir_if_not_exists(const char *path);
 bool nob_copy_file(const char *src_path, const char *dst_path);
 bool nob_copy_directory_recursively(const char *src_path, const char *dst_path);
 bool nob_read_entire_dir(const char *parent, Nob_File_Paths *children);
 bool nob_write_entire_file(const char *path, const void *data, size_t size);
+bool nob_read_entire_dir_filtered(const char *parent, Nob_File_Paths *children, bool use_full_path, Nob_File_Filter filter, void *user_data);
+bool nob_filter_by_extension(const char *path, void *user_data);
+bool nob_filter_starts_with(const char *path, void *user_data); // Filter to only include files that starts with user_data
 Nob_File_Type nob_get_file_type(const char *path);
+const char* nob_base_name(const char *file_path); // Returns the base name of a file path (does not modifying the input)
+const char* nob_dir_of(const char *file_path);
+const char* nob_path_without_ext(const char *file_path, bool last);
+const char* nob_absolute_path(const char *file_path); // Returns the absolute path without modifying the input
+
+
 
 
 #define nob_return_defer(value) do { result = (value); goto defer; } while(0)
@@ -323,6 +335,7 @@ int nob_needs_rebuild(const char *output_path, const char **input_paths, size_t 
 int nob_needs_rebuild1(const char *output_path, const char *input_path);
 int nob_file_exists(const char *file_path);
 
+
 // TODO: add MinGW support for Go Rebuild Urself™ Technology
 #ifndef NOB_REBUILD_URSELF
 #  if _WIN32
@@ -360,36 +373,41 @@ int nob_file_exists(const char *file_path);
 //   do not recommend since the whole idea of nobuild is to keep the process of bootstrapping
 //   as simple as possible and doing all of the actual work inside of the nobuild)
 //
-#define NOB_GO_REBUILD_URSELF(argc, argv)                                                    \
-    do {                                                                                     \
-        const char *source_path = __FILE__;                                                  \
-        assert(argc >= 1);                                                                   \
-        const char *binary_path = argv[0];                                                   \
-                                                                                             \
-        int rebuild_is_needed = nob_needs_rebuild(binary_path, &source_path, 1);             \
-        if (rebuild_is_needed < 0) exit(1);                                                  \
-        if (rebuild_is_needed) {                                                             \
-            Nob_String_Builder sb = {0};                                                     \
-            nob_sb_append_cstr(&sb, binary_path);                                            \
-            nob_sb_append_cstr(&sb, ".old");                                                 \
-            nob_sb_append_null(&sb);                                                         \
-                                                                                             \
-            if (!nob_rename(binary_path, sb.items)) exit(1);                                 \
-            Nob_Cmd rebuild = {0};                                                           \
-            nob_cmd_append(&rebuild, NOB_REBUILD_URSELF(binary_path, source_path));          \
-            bool rebuild_succeeded = nob_cmd_run_sync(rebuild);                              \
-            nob_cmd_free(rebuild);                                                           \
-            if (!rebuild_succeeded) {                                                        \
-                nob_rename(sb.items, binary_path);                                           \
-                exit(1);                                                                     \
-            }                                                                                \
-                                                                                             \
-            Nob_Cmd cmd = {0};                                                               \
-            nob_da_append_many(&cmd, argv, argc);                                            \
-            if (!nob_cmd_run_sync(cmd)) exit(1);                                             \
-            exit(0);                                                                         \
-        }                                                                                    \
-    } while(0)
+#define NOB_GO_REBUILD_URSELF(argc, argv)                                      \
+    do {                                                                       \
+        const char *source_path = __FILE__;                                    \
+        const char *header_path =                                              \
+            nob_temp_sprintf("%s.h", nob_path_without_ext(source_path, true)); \
+        const char *depends_on[] = {source_path, header_path};                 \
+        assert(argc >= 1);                                                     \
+        const char *binary_path = argv[0];                                     \
+                                                                               \
+        int rebuild_is_needed = nob_needs_rebuild(binary_path, depends_on,     \
+                                                  NOB_ARRAY_LEN(depends_on));  \
+        if (rebuild_is_needed < 0) exit(1);                                    \
+        if (rebuild_is_needed) {                                               \
+            Nob_String_Builder sb = {0};                                       \
+            nob_sb_append_cstr(&sb, binary_path);                              \
+            nob_sb_append_cstr(&sb, ".old");                                   \
+            nob_sb_append_null(&sb);                                           \
+                                                                               \
+            if (!nob_rename(binary_path, sb.items)) exit(1);                   \
+            Nob_Cmd rebuild = {0};                                             \
+            nob_cmd_append(&rebuild,                                           \
+                           NOB_REBUILD_URSELF(binary_path, source_path));      \
+            bool rebuild_succeeded = nob_cmd_run_sync(rebuild);                \
+            nob_cmd_free(rebuild);                                             \
+            if (!rebuild_succeeded) {                                          \
+                nob_rename(sb.items, binary_path);                             \
+                exit(1);                                                       \
+            }                                                                  \
+                                                                               \
+            Nob_Cmd cmd = {0};                                                 \
+            nob_da_append_many(&cmd, argv, argc);                              \
+            if (!nob_cmd_run_sync(cmd)) exit(1);                               \
+            exit(0);                                                           \
+        }                                                                      \
+    } while (0)
 // The implementation idea is stolen from https://github.com/zhiayang/nabs
 
 typedef struct {
@@ -784,10 +802,9 @@ defer:
     return result;
 }
 
-// Type definition for the filter callback
-typedef bool (*Nob_File_Filter)(const char *path, void *user_data);
 
-/* 
+
+/*
 . Example Usage:
 .   File_Paths hfiles = {0};
 .   read_entire_dir_filtered("./", &hfiles, true, nob_filter_by_extension, ".h");
@@ -845,6 +862,35 @@ bool nob_filter_by_extension(const char *path, void *user_data)
     const char *file_ext = strrchr(path, '.');
     return file_ext != NULL && strcmp(file_ext, extension) == 0;
 }
+
+// Filter to only include files that starts with user_data
+bool nob_filter_starts_with(const char *path, void *user_data)
+{
+    const char *section        = (const char *)user_data;
+
+    const size_t section_count = strlen(section);
+    const size_t path_count    = strlen(path);
+    if (path_count < section_count) {
+        return false;
+    } else {
+        return memcmp(path, section, section_count) == 0;
+    }
+}
+
+// Filter to only include files that its base_name starts with user_data
+bool nob_filter_base_name_starts_with(const char *path, void *user_data)
+{
+    const char *section        = (const char *)user_data;
+
+    const size_t section_count = strlen(section);
+    const size_t path_count    = strlen(path);
+    if (path_count < section_count) {
+        return false;
+    } else {
+        return memcmp(nob_base_name(path), section, section_count) == 0;
+    }
+}
+
 
 bool nob_write_entire_file(const char *path, const void *data, size_t size)
 {
@@ -968,6 +1014,165 @@ defer:
     nob_da_free(dst_sb);
     nob_da_free(children);
     return result;
+}
+
+
+
+// Returns the base name of a file path (does not modifying the input)
+const char *nob_base_name(const char *file_path)
+{
+    if (file_path == NULL) return NULL;
+
+    const char *last_separator = strrchr(file_path, PATH_SEPARATOR_CHAR);
+
+    // If no separator found, return the original path
+    if (last_separator == NULL) {
+        return file_path;
+    }
+
+    // Pointer to character after the separator
+    return last_separator + 1;
+}
+
+const char *nob_dir_of(const char *file_path)
+{
+    if (file_path == NULL) return NULL;
+    
+    size_t len = strlen(file_path);
+    char* dir_path = nob_temp_strdup(file_path);
+
+    
+    // Handle empty string
+    if (len == 0) {
+        dir_path[0] = '.';
+        dir_path[1] = '\0';
+        return dir_path;
+    }
+    
+    // Copy path to work with
+    strncpy(dir_path, file_path, len);
+    
+    // Find last separator (handling both Unix and Windows paths)
+    char *last_slash = strrchr(dir_path, '/');
+    char *last_backslash = strrchr(dir_path, '\\');
+    
+    // Get the latter of the two separators
+    char *last_separator = (last_slash > last_backslash) ? last_slash : last_backslash;
+    
+    if (last_separator == NULL) {
+        // No separator found, return "."
+        dir_path[0] = '.';
+        dir_path[1] = '\0';
+        return dir_path;
+    }
+    
+    // Special case: root directory
+    if (last_separator == dir_path) {
+        // Path like "/file" -> "/"
+        dir_path[1] = '\0';
+        return dir_path;
+    }
+    
+    // Special case: Windows root (e.g., "C:\file" -> "C:\")
+    if (len >= 3 && 
+        isalpha(dir_path[0]) && 
+        dir_path[1] == ':' && 
+        (dir_path[2] == '\\' || dir_path[2] == '/')) {
+        if (last_separator == dir_path + 2) {
+            dir_path[3] = '\0';
+            return dir_path;
+        }
+    }
+    
+    // Terminate string at last separator
+    *last_separator = '\0';
+    return nob_temp_sprintf("%s", dir_path);
+}
+
+const char* nob_path_without_ext(const char *file_path, bool last) 
+{
+    if (file_path == NULL) return NULL;
+    
+    char* result_buffer = nob_temp_strdup(file_path);
+    
+    // Handle special dots dir
+    if (strcmp(result_buffer, ".") == 0 || strcmp(result_buffer, "..") == 0) {
+        return result_buffer;
+    }
+    
+    char *first_dot = strchr(result_buffer, '.');
+    char *last_dot = strrchr(result_buffer, '.');
+    
+    // No extension found
+    if (first_dot == NULL) {
+        return result_buffer;
+    }
+    
+    // Handle hidden files starting with a dot
+    if (first_dot == result_buffer) {
+        if (last_dot == first_dot) {
+            // Just a hidden file without extension
+            return result_buffer;
+        }
+        // Hidden file with extension, move past the first dot
+        first_dot = strchr(first_dot + 1, '.');
+        last_dot = strrchr(first_dot, '.');
+        if (first_dot == NULL) {
+            return result_buffer;
+        }
+    }
+    
+    // Terminate string at appropriate dot position
+    if (last) {
+        *last_dot = '\0';
+    } else {
+        *first_dot = '\0';
+    }
+    
+    return result_buffer;
+}
+
+// Returns the absolute path without modifying the input
+const char* nob_absolute_path(const char *file_path) {
+    if (file_path == NULL) return NULL;
+    
+    static char absolute_path[PATH_MAX];
+    absolute_path[PATH_MAX-1] = '\0';
+
+    //
+    // Why not use realpath?
+    //     char *result = realpath(file_path, absolute_path);
+    //
+    // The POSIX.1-2001 standard version of this function is broken by
+    // design, since it is impossible to determine a suitable size for
+    // the output buffer, resolved_path
+    // see:      https://www.man7.org/linux/man-pages/man3/realpath.3.html
+    //
+    // Also, maybe it doesn't matter, but this implementation works
+    //
+    
+    #ifdef _WIN32
+        char *result = _fullpath(absolute_path, file_path, PATH_MAX);
+        return nob_temp_strdup(result);
+    #else
+    size_t len = strlen(file_path);
+    // Get the current working directory if the path is relative
+    if ( len > 0 && file_path[0] != PATH_SEPARATOR_CHAR) {
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) == NULL) {
+            return NULL;
+        }
+        
+        // Combine current directory with file path
+        snprintf(absolute_path, PATH_MAX, "%s"PATH_SEPARATOR"%s", cwd, file_path);
+    } else {
+        // Nothing to do, is already absolute
+        strncpy(absolute_path, file_path, len);
+    }
+         
+    #endif
+
+    return nob_temp_strdup(absolute_path);
 }
 
 char *nob_temp_strdup(const char *cstr)
@@ -1394,6 +1599,10 @@ int closedir(DIR *dirp)
         #define filter_by_extension nob_filter_by_extension
         #define write_entire_file nob_write_entire_file
         #define get_file_type nob_get_file_type
+        #define base_name nob_base_name
+        #define dir_of nob_dir_of
+        #define path_without_ext nob_path_without_ext
+        #define absolute_path nob_absolute_path
         #define rename nob_rename
         #define needs_rebuild nob_needs_rebuild
         #define needs_rebuild1 nob_needs_rebuild1

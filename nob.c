@@ -75,6 +75,7 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
         const char *extra_defines_cstrs[] = {
             "GUI_IMPLEMENTATION", "NOB_STRIP_PREFIX", "NOB_IMPLEMENTATION",
             "RAYGUI_IMPLEMENTATION", "RAYGUI_MO_IMPLEMENTATION",
+            "RLGL_IMPLEMENTATION",
 
             "GUI_FILE_DIALOG_IMPLEMENTATION",
             "GUI_WINDOW_FILE_DIALOG_IMPLEMENTATION",
@@ -171,8 +172,15 @@ bool build_raylib() {
         ) {
             cmd.count = 0;
             cmd_append(&cmd, CC);
-            cmd_append(&cmd, /* "-ggdb", */ "-DPLATFORM_DESKTOP", "-fPIC",
-                           "-DSUPPORT_FILEFORMAT_FLAC=1");
+            cmd_append(&cmd, 
+                       "-fPIC",
+                       "-DPLATFORM_DESKTOP",
+                       #ifdef DEBUG_RAYLIB
+                           "-ggdb",
+                           "-DRLGL_SHOW_GL_DETAILS_INFO=1" 
+                        #endif
+                       "-DSUPPORT_FILEFORMAT_FLAC=1"
+            );
 #if !defined(__MINGW64__)
             cmd_append(&cmd, "-D_GLFW_X11");
 #else
@@ -244,10 +252,13 @@ bool build_cyber_player(const char *sources[]) {
     }
 
 
+    cmd_append(&cmd, "-fmax-errors=5");
     // OpenGL renderer is broken rn
     cmd_append(&cmd, "-DSOFTWARE_RENDERER");
     cmd_append(&cmd, "-D_REENTRANT");
     cmd_append(&cmd, "-DDEBUG");
+    
+
 
 
     cmd_append(&cmd,
@@ -296,6 +307,7 @@ bool build_cyber_player(const char *sources[]) {
     // nob_read_entire_dir("./", &hfiles);
     read_entire_dir_filtered("./", &hfiles, true, nob_filter_by_extension, ".h");
     read_entire_dir_filtered("./src/vendor/", &hfiles, true, nob_filter_by_extension, ".h");
+    read_entire_dir_filtered("./src/vendor/raylib/src/", &hfiles, true, nob_filter_by_extension, ".h");
     read_entire_dir_filtered("./src/include", &hfiles, true, nob_filter_by_extension, ".h");
 
     for (int i = 0; i < hfiles.count; ++i) {
@@ -338,37 +350,55 @@ int main(int argc, char **argv) {
         String_View arg_sv = sv_from_cstr(arg);
         if(sv_eq(arg_sv, sv_from_cstr("run"))) {
             run = true;
-        } else if(sv_eq(arg_sv, sv_from_cstr("example"))) {
-            if (argc > 0) {
-                const char* example = shift_args(&argc, &argv);
-                const char* sources[] = {example, NULL};
-                build_cyber_player(sources);
-
-                const char *src = tprintf("%s/%s", BUILD_DIR, BIN);
-
-                String_View example_sv = sv_from_cstr(example);
+        } else if(sv_eq(arg_sv, sv_from_cstr("examples"))) {
+            if (argc == 0) {
+                Cmd cmd = {0};
+                File_Paths c_files = {0};
 
                 //
-                // We could, but fuckit
-                // malloc(example_sv.count);
-                // memset
+                // Before activating again do this somehow
+                // nob_needs_rebuild
                 //
-                char* cstr_example_bin = basename((char*)example);
-                char *ext = strrchr(cstr_example_bin, '.');
-                if (ext) {
-                    *ext = '\0'; // Terminate the string at the '.' charact
+                #if 0
+                read_entire_dir_filtered(
+                    "./examples/raylib/text/", &c_files,
+                    true, nob_filter_by_extension, ".c"
+                );
+                read_entire_dir_filtered(
+                    "./examples/raylib/shapes/", &c_files,
+                    true, nob_filter_by_extension, ".c"
+                );
+                #endif
+
+                read_entire_dir_filtered(
+                    "./examples", &c_files,
+                    true, nob_filter_base_name_starts_with,
+                    "raylib_"
+                );
+                // da_append(&c_files, "./examples/rectangle_rounded_gradient.c");
+
+                for (int idx = 0; idx < c_files.count; idx += 1) {
+                    const char *example = c_files.items[idx];
+                    char* cstr_example_bin = basename((char*)strdup(example));
+                    String_View example_sv = sv_from_cstr(example);
+                    char *ext = strrchr(cstr_example_bin, '.');
+                    if (ext) {
+                        *ext = '\0'; // Terminate the string at the '.' charact
+                    }
+                    String_View example_bin = sv_from_cstr(cstr_example_bin);
+                    const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
+                    const char *sources[] = {example, tprintf("-o%s", dst), NULL};
+                    if (!build_cyber_player(sources)) {
+                        nob_log(ERROR, "We errored out on example=%s dst=%s", example, dst);
+                        exit(1);
+                    }
                 }
-                String_View example_bin = sv_from_cstr(cstr_example_bin);
-                // example_bin.count -= 2;
 
-                const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
-                bool ok  = copy_file(src, dst);
-                NOB_ASSERT(ok);
             } else {
-                nob_log(ERROR, "no example provided");
+                nob_log(ERROR, "Expected not more satuff");
                 exit(1);
             }
-            run = true;
+            // run = true;
         }
     }
 
@@ -387,9 +417,6 @@ int main(int argc, char **argv) {
 
 
     if (!build_raylib()) return 1;
-
-    const char *test[] = {"./test.c", "-otest",  NULL};
-    if (!build_cyber_player(test)) return 1;
 
     const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
     if (!build_cyber_player(sources)) return 1;

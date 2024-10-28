@@ -857,10 +857,10 @@ void DrawRectangleLinesEx(Rectangle rec, float lineThick, Color color)
 }
 
 
-// Draw a gradient-filled rounded rectangle
+// Draw rectangle with rounded edges and horizontal gradient, with options to choose side of roundness
 void DrawRectangleRoundedGradientH(Rectangle rec, float roundnessLeft, float roundnessRight, int segments, Color left, Color right)
 {
-    // Not a rounded rectangle
+    // Neither side is rounded
     if ((roundnessLeft <= 0.0f && roundnessRight <= 0.0f) || (rec.width < 1) || (rec.height < 1 ))
     {
         DrawRectangleGradientEx(rec, left, left, right, right);
@@ -870,7 +870,7 @@ void DrawRectangleRoundedGradientH(Rectangle rec, float roundnessLeft, float rou
     if (roundnessLeft  >= 1.0f) roundnessLeft  = 1.0f;
     if (roundnessRight >= 1.0f) roundnessRight = 1.0f;
 
-    // Calculate corner radius
+    // Calculate corner radius both from right and left
     float recSize = rec.width > rec.height ? rec.height : rec.width;
     float radiusLeft  = (recSize*roundnessLeft)/2;
     float radiusRight = (recSize*roundnessRight)/2;
@@ -971,7 +971,6 @@ void DrawRectangleRoundedGradientH(Rectangle rec, float roundnessLeft, float rou
         rlColor4ub(left.r, left.g, left.b, left.a);
         rlTexCoord2f(shapeRect.x/texShapes.width, shapeRect.y/texShapes.height);
         rlVertex2f(point[0].x, point[0].y);
-
         rlTexCoord2f(shapeRect.x/texShapes.width, (shapeRect.y + shapeRect.height)/texShapes.height);
         rlVertex2f(point[8].x, point[8].y);
 
@@ -1034,7 +1033,83 @@ void DrawRectangleRoundedGradientH(Rectangle rec, float roundnessLeft, float rou
     rlEnd();
     rlSetTexture(0);
 #else
-    #error "Only support" __PRETTY_FUNCTION__ " in QUAD mode"
+    rlBegin(RL_TRIANGLES);
+
+        // Draw all of the 4 corners: [1] Upper Left Corner, [3] Upper Right Corner, [5] Lower Right Corner, [7] Lower Left Corner
+        for (int k = 0; k < 4; ++k) // Hope the compiler is smart enough to unroll this loop
+        {
+            Color color;
+            float radius;
+            if (k == 0) color = left,  radius = radiusLeft;     // [1] Upper Left Corner
+            if (k == 1) color = right, radius = radiusRight;    // [3] Upper Right Corner
+            if (k == 2) color = right, radius = radiusRight;    // [5] Lower Right Corner
+            if (k == 3) color = left,  radius = radiusLeft;     // [7] Lower Left Corner
+            float angle = angles[k];
+            const Vector2 center = centers[k];
+            for (int i = 0; i < segments; i++)
+            {
+                rlColor4ub(color.r, color.g, color.b, color.a);
+                rlVertex2f(center.x, center.y);
+                rlVertex2f(center.x + cosf(DEG2RAD*(angle + stepLength))*radius, center.y + sinf(DEG2RAD*(angle + stepLength))*radius);
+                rlVertex2f(center.x + cosf(DEG2RAD*angle)*radius, center.y + sinf(DEG2RAD*angle)*radius);
+                angle += stepLength;
+            }
+        }
+
+        // [2] Upper Rectangle
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[0].x, point[0].y);
+        rlVertex2f(point[8].x, point[8].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[9].x, point[9].y);
+        rlVertex2f(point[1].x, point[1].y);
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[0].x, point[0].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[9].x, point[9].y);
+
+        // [4] Right Rectangle
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[9].x, point[9].y);
+        rlVertex2f(point[10].x, point[10].y);
+        rlVertex2f(point[3].x, point[3].y);
+        rlVertex2f(point[2].x, point[2].y);
+        rlVertex2f(point[9].x, point[9].y);
+        rlVertex2f(point[3].x, point[3].y);
+
+        // [6] Bottom Rectangle
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[11].x, point[11].y);
+        rlVertex2f(point[5].x, point[5].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[4].x, point[4].y);
+        rlVertex2f(point[10].x, point[10].y);
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[11].x, point[11].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[4].x, point[4].y);
+
+        // [8] Left Rectangle
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[7].x, point[7].y);
+        rlVertex2f(point[6].x, point[6].y);
+        rlVertex2f(point[11].x, point[11].y);
+        rlVertex2f(point[8].x, point[8].y);
+        rlVertex2f(point[7].x, point[7].y);
+        rlVertex2f(point[11].x, point[11].y);
+
+        // [9] Middle Rectangle
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[8].x, point[8].y);
+        rlVertex2f(point[11].x, point[11].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[10].x, point[10].y);
+        rlVertex2f(point[9].x, point[9].y);
+        rlColor4ub(left.r, left.g, left.b, left.a);
+        rlVertex2f(point[8].x, point[8].y);
+        rlColor4ub(right.r, right.g, right.b, right.a);
+        rlVertex2f(point[10].x, point[10].y);
+    rlEnd();
 #endif
 }
 
