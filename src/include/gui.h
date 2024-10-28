@@ -394,7 +394,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     return ret;
 }
 
-#define RADIUS 0.8
+#define RADIUS 8.0
 // Draw progress bar background
 int GuiMoTrackingBar(Rectangle bounds, Segment* segments, int segment_count, double duration, Segment current, double *percent_position, bool* seeking) {
 

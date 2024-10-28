@@ -857,11 +857,12 @@ int main(int argc, char *argv[]) {
         BeginTextureMode(target);
         ClearBackground(BLACK);
 
-        Vector2 mouse_position  = GetMousePosition();
-        Vector2 mouse_wheel     = GetMouseWheelMoveV();
-        Vector2 window_size     = CLITERAL(Vector2){GetScreenWidth(), GetScreenHeight()};
-        Vector2 window_position = GetWindowPosition();
-        Vector2 mouse_delta     = GetMouseDelta();
+        Vector2   mouse_position  = GetMousePosition();
+        Vector2   mouse_wheel     = GetMouseWheelMoveV();
+        Vector2   window_size     = { GetScreenWidth(), GetScreenHeight()};
+        Rectangle window_rect     = { 0, 0, GetScreenWidth(), GetScreenHeight()};
+        Vector2   window_position = GetWindowPosition();
+        Vector2   mouse_delta     = GetMouseDelta();
 
         TRACE(LOG_TRACE, "mouse_wheel = {%f, %f};", mouse_wheel.x,
               mouse_wheel.y);
@@ -1084,22 +1085,14 @@ int main(int argc, char *argv[]) {
         }
 
         {
-            const int volume_pad = 3;
-            const int volume_height = 10;
-            const int volume_width = 200;
+            static bool volumeSeek  = false;
 
-            // DrawRectangle(0, 0, 2, PROGRESS_BAR_HEIGHT/2, BLACK);
-            // DrawRectangle(0, 0, ((150.0 / 100.0) * volume_width), volume_height,
-            //               RED);
-            // DrawRectangle(0, 0, ((120.0 / 100.0) * volume_width), volume_height,
-            //               YELLOW);
-            // DrawRectangle(0, 0, ((100.0 / 100.0) * volume_width), volume_height, BLACK);
-            // DrawRectangle(volume_pad, volume_pad,
-            //               ((volume / 100.0) * volume_width) - 2 * volume_pad,
-            //               (volume_height - 2 * volume_pad), GREEN);
+            const float volume_pad_percent = 0.01;
+            const int volume_height        = 10;
+            const int volume_width         = 200;
+            const int volume_pad           = Min(volume_pad_percent*GetScreenWidth(), volume_pad_percent*GetScreenHeight());
 
-            Rectangle volumeBounds = { 0, 0, ((100.0 / 100.0) * volume_width), volume_height };
-            static bool volumeSeek = false;
+            Rectangle volumeBounds  = { volume_pad, volume_pad, volume_width, volume_height };
             double volumePercentage = volume;
             GuiMoVolume(volumeBounds, &volumePercentage, 130.0, &volumeSeek);
             if (volumeSeek) {
@@ -1143,15 +1136,37 @@ int main(int argc, char *argv[]) {
                 int active = -1, focus = 0;
                 if (showMenu) {
                     const char *options[] = {
-                        "yank path", "huuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuge",
+                        "yank path", "explorer",
                         "copy file", "copy file", "copy file"
                     };
-                    int count = sizeof(options) / sizeof(options[0]);
+                    int count = ARRAY_LEN(options);
                     // SCROLL_SLIDER_SIZE
                     GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, menuBounds.height/count);
                     int a = GuiMoListView(menuBounds, options, count,
                                           &menu_scroll_percent, &active, &focus,
                                           true, 8);
+                    if (active == 1 || active == 0) {
+                        const char* clip = nob_absolute_path(currently_playing_path);
+                        if (clip != NULL) {
+                            printf("clip=%s\n", clip);
+                            SetClipboardText(clip);
+                            GuiDrawText(
+                                clip,
+                                MiddleOf(window_rect, MeasureText(clip, 32), 32), 0,
+                                RED);
+                                // #if defined(__MINGW64__)
+                                if (active == 1) {
+                                    Nob_Cmd cmd = {0};
+                                    // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/select,", clip);
+                                    cmd_append(&cmd, "explorer.exe", "/select,", clip);
+                                    // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/SEPERATE", "/select,", clip);
+                                    // cmd_append(&cmd, "explorer.exe", nob_dir_of(clip));
+                                    cmd_run_async(cmd);
+                                }
+                                // #endif
+                        }
+
+                    }
 
                     int hit_box_margin = 20;
                     Rectangle men_hit_box = {
