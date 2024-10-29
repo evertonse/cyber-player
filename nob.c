@@ -13,6 +13,7 @@
 #include "./nob.h"
 
 #define BUILD_DIR ".build"
+#define SRC_DIR "./src"
 #define BIN "main"
 
 
@@ -33,6 +34,24 @@ static const char *raylib_modules[] = {
     "rcore",   "raudio", "rglfw",     "rmodels",
     "rshapes", "rtext",  "rtextures", "utils",
 };
+
+// regex: "raylib_.*\.c"
+static bool filter_base_name_starts_with_raylib_and_ends_with_dot_c(const char *path, void *user_data)
+{
+    const char *section        = "raylib_";
+
+    const size_t section_count = strlen(section);
+    const size_t path_count    = strlen(path);
+    const size_t ext_count     = strlen(".c");
+
+    if (path_count < section_count || ext_count > section_count) {
+        return false;
+    }
+
+    bool starts = memcmp(nob_base_name(path), section, section_count)      == 0;
+    bool ends   = memcmp(path + (path_count - ext_count), ".c", ext_count) == 0;
+    return starts && ends;
+}
 
 
 #if defined(_WIN32) && defined(__MINGW64__)
@@ -137,6 +156,45 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
     sb_append_cstr(sb, "  }\n");
 }
 
+bool build_clipboard() {
+    Cmd cmd = {0};
+
+    bool result = true;
+    const char* dir = BUILD_DIR"/clipboard";
+    nob_mkdir_if_not_exists(dir);
+
+    const char *objpath = tprintf("%s/clipboard.o", dir);
+    const char *src = tprintf("%s/clipboard.c", SRC_DIR);
+
+    {
+        cmd_append(&cmd, CC, "-c", src);
+        cmd_append(&cmd, "-fPIC", tprintf("%s%s","-o", objpath), "-lgdi32");
+        if (!cmd_run_sync(cmd)) return_defer(false);
+        nob_log(INFO, "OK: %s %s",CC, __PRETTY_FUNCTION__);
+    }
+
+    {
+        cmd.count = 0;
+        const char *libpath = tprintf("%s/libclipboard.a", dir);
+        File_Paths object_files = {0};
+        da_append(&object_files, objpath);
+        if (needs_rebuild(libpath, object_files.items, object_files.count)) {
+            cmd_append(&cmd, AR, "-crs", libpath);
+
+            for (int idx = 0; idx < object_files.count; idx += 1) {
+                cmd_append(&cmd, object_files.items[idx]);
+            }
+
+            if (!cmd_run_sync(cmd)) return_defer(false);
+        }
+        nob_log(INFO, "OK: %s %s", AR, __PRETTY_FUNCTION__);
+    }
+
+defer:
+    cmd_free(cmd);
+    return result;
+}
+
 bool build_raylib() {
     bool result = true;
     Cmd cmd = {0};
@@ -172,12 +230,13 @@ bool build_raylib() {
         ) {
             cmd.count = 0;
             cmd_append(&cmd, CC);
-            cmd_append(&cmd, 
+            cmd_append(&cmd,
                        "-fPIC",
                        "-DPLATFORM_DESKTOP",
+                       "-DSUPPORT_FILEFORMAT_BMP=1",
                        #ifdef DEBUG_RAYLIB
                            "-ggdb",
-                           "-DRLGL_SHOW_GL_DETAILS_INFO=1" 
+                           "-DRLGL_SHOW_GL_DETAILS_INFO=1"
                         #endif
                        "-DSUPPORT_FILEFORMAT_FLAC=1"
             );
@@ -221,7 +280,7 @@ defer:
     return result;
 }
 
-bool build_cyber_player(const char *sources[]) {
+bool build_with_libs(const char *sources[]) {
     bool result = true;
     Cmd cmd = {0};
     Procs procs = {0};
@@ -229,6 +288,9 @@ bool build_cyber_player(const char *sources[]) {
 
     cmd_append(&cmd, CC);
 
+    #ifdef _WIN32
+        if (!build_clipboard()) return 1;
+    #endif
     // "sr.c", "progress.c";
 
     const char * output_arg = NULL;
@@ -257,7 +319,7 @@ bool build_cyber_player(const char *sources[]) {
     cmd_append(&cmd, "-DSOFTWARE_RENDERER");
     cmd_append(&cmd, "-D_REENTRANT");
     cmd_append(&cmd, "-DDEBUG");
-    
+
 
 
 
@@ -277,10 +339,11 @@ bool build_cyber_player(const char *sources[]) {
 
 
 
-    cmd_append(&cmd, "-lmpv", "-lSDL2", "-lm", "-L./",
-                   "-l:./" RAYLIB_BUILD_DIR "/libraylib.a", "-lpthread");
+    cmd_append(&cmd, "-lmpv", "-lSDL2", "-lm",
+                     "-L./",  "-l:./"RAYLIB_BUILD_DIR"/libraylib.a", "-lpthread");
 
 #if defined(__MINGW64__)
+    cmd_append(&cmd,"-L./", "-l:./"BUILD_DIR"/clipboard/libclipboard.a");
     cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/usr/include/SDL2", "-I/mingw64/include");
     // cmd_append(&cmd, "-lglfw3");
     // cmd_append(&cmd, "-lopengl32");
@@ -372,7 +435,9 @@ int main(int argc, char **argv) {
 
                 read_entire_dir_filtered(
                     "./examples", &c_files,
-                    true, nob_filter_base_name_starts_with,
+                    true,
+                    // nob_filter_base_name_starts_with,
+                    filter_base_name_starts_with_raylib_and_ends_with_dot_c,
                     "raylib_"
                 );
                 // da_append(&c_files, "./examples/rectangle_rounded_gradient.c");
@@ -388,7 +453,7 @@ int main(int argc, char **argv) {
                     String_View example_bin = sv_from_cstr(cstr_example_bin);
                     const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
                     const char *sources[] = {example, tprintf("-o%s", dst), NULL};
-                    if (!build_cyber_player(sources)) {
+                    if (!build_with_libs(sources)) {
                         nob_log(ERROR, "We errored out on example=%s dst=%s", example, dst);
                         exit(1);
                     }
@@ -416,10 +481,15 @@ int main(int argc, char **argv) {
     if (!mkdir_if_not_exists(BUILD_DIR)) return false;
 
 
+
+    #ifdef _WIN32
+        if (!build_clipboard()) return 1;
+    #endif
+
     if (!build_raylib()) return 1;
 
     const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
-    if (!build_cyber_player(sources)) return 1;
+    if (!build_with_libs(sources)) return 1;
 
 
     if (run) {

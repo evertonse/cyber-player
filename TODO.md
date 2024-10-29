@@ -13,6 +13,7 @@ TODO: Each Gui component has a bool group for interactivity
 TODO: make a Gui component for mpv
 TODO: Draw Ui on a single call, ok?
 
+TODO: libmpv Compile from project it's self
 TODO: Hide ui after a bit of time not heavily moving mouse
 TODO: Make it so the END stuff is a iffy
 

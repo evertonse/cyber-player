@@ -6,6 +6,8 @@ nob
 nob.old
 nob.exe
 ./nob.exe
+*.exe
+**.exe
 *.json
 *.old
 .last_yank.txt
