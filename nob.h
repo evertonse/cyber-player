@@ -1016,6 +1016,216 @@ defer:
     return result;
 }
 
+// TODO: @test
+bool nob_remove(const char *path)
+{
+    bool result = true;
+    Nob_File_Paths children = {0};
+    Nob_String_Builder path_sb = {0};
+    size_t temp_checkpoint = nob_temp_save();
+    
+    Nob_File_Type type = nob_get_file_type(path);
+    if (type < 0) return false;
+
+    switch (type) {
+        case NOB_FILE_DIRECTORY: {
+            // First read directory contents
+            if (!nob_read_entire_dir(path, &children)) nob_return_defer(false);
+            
+            // Remove all children first
+            for (size_t i = 0; i < children.count; ++i) {
+                // Skip . and .. entries
+                if (strcmp(children.items[i], ".") == 0) continue;
+                if (strcmp(children.items[i], "..") == 0) continue;
+
+                // Build full path for child
+                path_sb.count = 0;
+                nob_sb_append_cstr(&path_sb, path);
+                nob_sb_append_cstr(&path_sb, "/");
+                nob_sb_append_cstr(&path_sb, children.items[i]);
+                nob_sb_append_null(&path_sb);
+
+                // Recursively remove child
+                if (!nob_remove(path_sb.items)) {
+                    nob_return_defer(false);
+                }
+            }
+
+            // Remove the now-empty directory
+            if (rmdir(path) != 0) {
+                nob_log(NOB_ERROR, "Could not remove directory %s: %s", 
+                        path, strerror(errno));
+                nob_return_defer(false);
+            }
+        } break;
+
+        case NOB_FILE_REGULAR: {
+            if (remove(path) != 0) {
+                nob_log(NOB_ERROR, "Could not remove file %s: %s", 
+                        path, strerror(errno));
+                nob_return_defer(false);
+            }
+        } break;
+
+        case NOB_FILE_SYMLINK: {
+            // On Unix-like systems, unlink works for both files and symlinks
+            if (unlink(path) != 0) {
+                nob_log(NOB_ERROR, "Could not remove symlink %s: %s", 
+                        path, strerror(errno));
+                nob_return_defer(false);
+            }
+        } break;
+
+        case NOB_FILE_OTHER: {
+            nob_log(NOB_ERROR, "Unsupported type of file %s", path);
+            nob_return_defer(false);
+        } break;
+
+        default: NOB_ASSERT(0 && "unreachable");
+    }
+
+defer:
+    nob_temp_rewind(temp_checkpoint);
+    nob_da_free(path_sb);
+    nob_da_free(children);
+    return result;
+}
+
+// @test
+// Checks if a string matches a pattern with '*' wildcards
+static bool match_pattern(const char* pattern, const char* str) {
+    // End of pattern
+    if (*pattern == '\0') return *str == '\0';
+
+    // Handle '*' wildcard
+    if (*pattern == '*') {
+        // Skip consecutive '*'
+        while (*(pattern + 1) == '*') pattern++;
+
+        // Try matching the rest of the pattern with different positions in str
+        for (size_t i = 0; i <= strlen(str); i++) {
+            if (match_pattern(pattern + 1, str + i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Normal character matching
+    if (*str != '\0' && (*pattern == *str || *pattern == '?')) {
+        return match_pattern(pattern + 1, str + 1);
+    }
+
+    return false;
+}
+
+// @test
+// Split path into directory and pattern parts
+static void split_path_pattern(const char* path, 
+                             Nob_String_Builder* dir_part,
+                             Nob_String_Builder* pattern_part) {
+    const char* last_slash = strrchr(path, '/');
+    
+    if (last_slash == NULL) {
+        // No directory part
+        nob_sb_append_cstr(pattern_part, path);
+        nob_sb_append_cstr(dir_part, ".");
+    } else {
+        // Has directory part
+        size_t dir_len = last_slash - path;
+        nob_sb_append_buf(dir_part, path, dir_len);
+        if (dir_part->count == 0) {
+            nob_sb_append_cstr(dir_part, "/");
+        }
+        nob_sb_append_cstr(pattern_part, last_slash + 1);
+    }
+    
+    nob_sb_append_null(dir_part);
+    nob_sb_append_null(pattern_part);
+}
+
+// @test
+static void glob_directory(const char* base_dir, const char* pattern, 
+                         Nob_File_Paths* result, bool* success) {
+    Nob_File_Paths dir_entries = {0};
+    Nob_String_Builder full_path = {0};
+    size_t temp_checkpoint = nob_temp_save();
+
+    // Read directory contents
+    if (!nob_read_entire_dir(base_dir, &dir_entries)) {
+        *success = false;
+        goto defer;
+    }
+
+    // Check each entry against pattern
+    for (size_t i = 0; i < dir_entries.count; ++i) {
+        const char* entry = dir_entries.items[i];
+        
+        // Skip . and .. entries
+        if (strcmp(entry, ".") == 0 || strcmp(entry, "..") == 0) continue;
+
+        if (match_pattern(pattern, entry)) {
+            // Build full path for matching entry
+            full_path.count = 0;
+            if (strcmp(base_dir, "/") == 0) {
+                nob_sb_append_cstr(&full_path, "/");
+            } else if (strcmp(base_dir, ".") != 0) {
+                nob_sb_append_cstr(&full_path, base_dir);
+                nob_sb_append_cstr(&full_path, "/");
+            }
+            nob_sb_append_cstr(&full_path, entry);
+            nob_sb_append_null(&full_path);
+
+            // Add to results
+            nob_da_append(result, nob_temp_strdup(full_path.items));
+        }
+    }
+
+defer:
+    nob_temp_rewind(temp_checkpoint);
+    nob_da_free(dir_entries);
+    nob_da_free(full_path);
+}
+
+// @test
+Nob_File_Paths nob_path_glob(const char* pattern) {
+    Nob_File_Paths result = {0};
+    Nob_String_Builder dir_part = {0};
+    Nob_String_Builder pattern_part = {0};
+    size_t temp_checkpoint = nob_temp_save();
+    bool success = true;
+
+    // Handle empty or NULL pattern
+    if (pattern == NULL || *pattern == '\0') {
+        goto defer;
+    }
+
+    // Split path into directory and pattern parts
+    split_path_pattern(pattern, &dir_part, &pattern_part);
+
+    // Check if directory exists
+    if (nob_get_file_type(dir_part.items) != NOB_FILE_DIRECTORY) {
+        goto defer;
+    }
+
+    // Perform glob matching in directory
+    glob_directory(dir_part.items, pattern_part.items, &result, &success);
+
+    // Sort results for consistency
+    if (result.count > 1) {
+        qsort(result.items, result.count, sizeof(result.items[0]),
+              (int (*)(const void*, const void*))strcmp);
+    }
+
+defer:
+    nob_temp_rewind(temp_checkpoint);
+    nob_da_free(dir_part);
+    nob_da_free(pattern_part);
+    if (!success) {
+        nob_da_free(result);
+    }
+    return result;
+}
 
 
 // Returns the base name of a file path (does not modifying the input)

@@ -121,6 +121,11 @@
     #include "rgestures.h"          // Gestures detection functionality
 #endif
 
+#if defined(SUPPORT_CLIPBOARD_IMAGE)
+    #define STBI_REQUIRED
+    #define SUPPORT_FILEFORMAT_BMP 1
+#endif
+
 #if defined(SUPPORT_CAMERA_SYSTEM)
     #define RCAMERA_IMPLEMENTATION
     #include "rcamera.h"            // Camera system functionality
@@ -153,14 +158,28 @@
     #define _GNU_SOURCE
 #endif
 
+
+#if defined(PLATFORM_DESKTOP)
+    #define PLATFORM_DESKTOP_GLFW
+#endif
+
+// Platform GLFW might have conlicted type if we do not include before
+#if defined(SUPPORT_CLIPBOARD_IMAGE) && defined(_WIN32) && defined(PLATFORM_DESKTOP_GLFW)
+// #define IMPORTED_WIN32_MODULES
+    // #include "platforms/rcore_clipboard_win32.c"
+#endif
+
 // Platform specific defines to handle GetApplicationDirectory()
 #if (defined(_WIN32) && !defined(PLATFORM_DESKTOP_RGFW)) || (defined(_MSC_VER) && defined(PLATFORM_DESKTOP_RGFW))
     #ifndef MAX_PATH
         #define MAX_PATH 1025
     #endif
+
+#if !defined(IMPORTED_WIN32_MODULES)
 __declspec(dllimport) unsigned long __stdcall GetModuleFileNameA(void *hModule, void *lpFilename, unsigned long nSize);
 __declspec(dllimport) unsigned long __stdcall GetModuleFileNameW(void *hModule, void *lpFilename, unsigned long nSize);
 __declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int cp, unsigned long flags, void *widestr, int cchwide, void *str, int cbmb, void *defchar, int *used_default);
+#endif
 unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
 unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
 #elif defined(__linux__)
@@ -498,7 +517,7 @@ static void ScanDirectoryFilesRecursively(const char *basePath, FilePathList *li
 static void RecordAutomationEvent(void); // Record frame events (to internal events array)
 #endif
 
-#if defined(_WIN32) && !defined(PLATFORM_DESKTOP_RGFW)
+#if defined(_WIN32) && !defined(PLATFORM_DESKTOP_RGFW) && !defined(IMPORTED_WIN32_MODULES)
 // NOTE: We declare Sleep() function symbol to avoid including windows.h (kernel32.lib linkage required)
 void __stdcall Sleep(unsigned long msTimeout);              // Required for: WaitTime()
 #endif
@@ -507,17 +526,24 @@ void __stdcall Sleep(unsigned long msTimeout);              // Required for: Wai
 const char *TextFormat(const char *text, ...);              // Formatting of text with variables to 'embed'
 #endif // !SUPPORT_MODULE_RTEXT
 
-#if defined(PLATFORM_DESKTOP)
-    #define PLATFORM_DESKTOP_GLFW
-#endif
+
 
 // Include platform-specific submodules
 #if defined(PLATFORM_DESKTOP_GLFW)
     #include "platforms/rcore_desktop_glfw.c"
+    #if defined(SUPPORT_CLIPBOARD_IMAGE) && defined(_WIN32)
+        #include "platforms/rcore_clipboard_win32.c"
+    #endif
 #elif defined(PLATFORM_DESKTOP_SDL)
     #include "platforms/rcore_desktop_sdl.c"
 #elif defined(PLATFORM_DESKTOP_RGFW)
     #include "platforms/rcore_desktop_rgfw.c"
+    #if defined(SUPPORT_CLIPBOARD_IMAGE) && defined(_WIN32)
+        #define WINUSER_ALREADY_INCLUDED
+        #define WINBASE_ALREADY_INCLUDED
+        #define WINGDI_ALREADY_INCLUDED
+        #include "platforms/rcore_clipboard_win32.c"
+    #endif
 #elif defined(PLATFORM_WEB)
     #include "platforms/rcore_web.c"
 #elif defined(PLATFORM_DRM)
@@ -528,6 +554,7 @@ const char *TextFormat(const char *text, ...);              // Formatting of tex
     // TODO: Include your custom platform backend!
     // i.e software rendering backend or console backend!
 #endif
+
 
 //----------------------------------------------------------------------------------
 // Module Functions Definition: Window and Graphics Device

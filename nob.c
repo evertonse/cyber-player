@@ -19,12 +19,15 @@
 
 #if defined(__MINGW64__)
 #   define CC "x86_64-w64-mingw32-gcc"
+// #   define CC "gcc"
 #else
 #   define CC "gcc"
 #endif
 
 // #define AR     "x86_64-w64-mingw32-ar"
 #define AR "ar"
+#define PLATFORM_SDL
+// #define PLATFORM_RGFW
 
 #define RAYLIB_BUILD_DIR BUILD_DIR "/raylib"
 #define RAYLIB_SOURCE_DIR "./src/vendor/raylib/src"
@@ -87,7 +90,13 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
     { // Extra Defines for debug  in .h files
 
         sb_append_cstr(sb, "    \"");
-        sb_printf(sb, "%s", "cc");
+        static const bool working_on_mingw = true;
+        if (working_on_mingw) {
+            sb_printf(sb, "%s", "x86_64-w64-mingw32-gcc");
+        } else {
+            sb_printf(sb, "%s", "cc");
+        }
+
         sb_printf(sb, "\"%s\n", comma);
 
         CStr_Array extra_defines = {0};
@@ -204,6 +213,7 @@ bool build_raylib() {
 
     read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &header_files, true, nob_filter_by_extension, ".h");
     read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &c_files, true, nob_filter_by_extension, ".c");
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR"/platforms", &c_files, true, nob_filter_by_extension, ".c");
 
     const char *build_path = RAYLIB_BUILD_DIR;
 
@@ -230,9 +240,18 @@ bool build_raylib() {
         ) {
             cmd.count = 0;
             cmd_append(&cmd, CC);
+
             cmd_append(&cmd,
                        "-fPIC",
+        #ifdef PLATFORM_SDL
+                       "-DPLATFORM_DESKTOP_SDL",
+        #elif defined(PLATFORM_RGFW)
+                       "-DPLATFORM_DESKTOP_RGFW",
+        #else
                        "-DPLATFORM_DESKTOP",
+        #endif
+
+                       "-DSUPPORT_CLIPBOARD_IMAGE=1",
                        "-DSUPPORT_FILEFORMAT_BMP=1",
                        #ifdef DEBUG_RAYLIB
                            "-ggdb",
@@ -240,13 +259,31 @@ bool build_raylib() {
                         #endif
                        "-DSUPPORT_FILEFORMAT_FLAC=1"
             );
+
+            cmd_append(&cmd, "-fmax-errors=5");
 #if !defined(__MINGW64__)
             cmd_append(&cmd, "-D_GLFW_X11");
 #else
 #endif
 
-            cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR"external/glfw/include");
+            // cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR"external/glfw/include");
+#define CURRENT_FULL_PATH "C:/msys64/home/Administrator/code/unamed-video"
+        #ifdef PLATFORM_SDL
+            cmd_append(&cmd,
+                   // "-l:C:/msys64/mingw64/lib/libSDL2.a",
+                   // "-IC:/msys64/mingw64/include/SDL2"
+                   // "-lSDL2", "-lSDL2Main",
 
+                       
+                   "-l:"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/lib/SDL3.lib",
+                   "-I"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/include/SDL3"
+                   // "-I"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/include/"
+                   // "-I/mingw64/include/SDL2"
+            );
+
+        #elif defined(PLATFORM_RGFW)
+            cmd_append(&cmd, "-lgdi32", "-lopengl32");
+        #endif
             cmd_append(&cmd, "-c", input_path);
             cmd_append(&cmd, "-o", output_path);
 
@@ -281,6 +318,7 @@ defer:
 }
 
 bool build_with_libs(const char *sources[]) {
+    bool should_build_clipboard = false;
     bool result = true;
     Cmd cmd = {0};
     Procs procs = {0};
@@ -289,7 +327,7 @@ bool build_with_libs(const char *sources[]) {
     cmd_append(&cmd, CC);
 
     #ifdef _WIN32
-        if (!build_clipboard()) return 1;
+        if (should_build_clipboard && !build_clipboard()) return 1;
     #endif
     // "sr.c", "progress.c";
 
@@ -339,11 +377,30 @@ bool build_with_libs(const char *sources[]) {
 
 
 
-    cmd_append(&cmd, "-lmpv", "-lSDL2", "-lm",
+    cmd_append(&cmd, "-lmpv", "-lm",
                      "-L./",  "-l:./"RAYLIB_BUILD_DIR"/libraylib.a", "-lpthread");
 
+
+        #ifdef PLATFORM_SDL
+            cmd_append(&cmd,
+                   // "-LC:/msys64/mingw64/lib/",
+                   // "-l:C:/msys64/mingw64/lib/libSDL2.a",
+                   "-lSDL2", "-lSDL2Main",
+                   // "-IC:/msys64/mingw64/include/SDL2"
+                   // "-I/mingw64/include/SDL2"
+            );
+        #elif defined(PLATFORM_RGFW)
+            cmd_append(&cmd,
+                   "-lgdi32",
+                   "-lopengl32",
+            );
+        #endif
+
 #if defined(__MINGW64__)
-    cmd_append(&cmd,"-L./", "-l:./"BUILD_DIR"/clipboard/libclipboard.a");
+    if (should_build_clipboard) {
+        cmd_append(&cmd,"-DSUPPORT_CLIPBOARD_IMAGE=1");
+        cmd_append(&cmd,"-L./", "-l:./"BUILD_DIR"/clipboard/libclipboard.a");
+    }
     cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/usr/include/SDL2", "-I/mingw64/include");
     // cmd_append(&cmd, "-lglfw3");
     // cmd_append(&cmd, "-lopengl32");
@@ -406,6 +463,7 @@ int main(int argc, char **argv) {
 
     const char *program = shift_args(&argc, &argv);
 
+    
     const char* arg = "";
     bool run = false;
     while (argc > 0) {
@@ -413,6 +471,26 @@ int main(int argc, char **argv) {
         String_View arg_sv = sv_from_cstr(arg);
         if(sv_eq(arg_sv, sv_from_cstr("run"))) {
             run = true;
+        } else if(sv_eq(arg_sv, sv_from_cstr("clip"))) {
+            build_raylib() || (exit(69), 0) ;
+            Cmd cmd = {0};
+
+            cmd_append(&cmd,
+                       "gcc", "./src/clipboard_original.c", "-c",
+                       "-oclipboard_original.o", "-lgdi32", "-lwinmm");
+            if (!cmd_run_sync_and_reset(&cmd)) return 1;
+
+            cmd_append(&cmd,
+                       "gcc", "examples/raylib_clipboard_image.c",
+                       "clipboard_original.o", "-lraylib", "-lgdi32",
+                       "-lwinmm"
+            );
+            if (!cmd_run_sync(cmd)) {
+                return 1;
+            } else {
+                return 0;
+            }
+
         } else if(sv_eq(arg_sv, sv_from_cstr("examples"))) {
             if (argc == 0) {
                 Cmd cmd = {0};
@@ -481,10 +559,6 @@ int main(int argc, char **argv) {
     if (!mkdir_if_not_exists(BUILD_DIR)) return false;
 
 
-
-    #ifdef _WIN32
-        if (!build_clipboard()) return 1;
-    #endif
 
     if (!build_raylib()) return 1;
 

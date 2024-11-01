@@ -89,7 +89,6 @@
 
 // Feature Test Macros required for this module
 //----------------------------------------------------------------------------------
-
 #if (defined(__linux__) || defined(PLATFORM_WEB)) && (_XOPEN_SOURCE < 500)
 
     #undef _XOPEN_SOURCE
