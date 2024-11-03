@@ -12,6 +12,7 @@ nob.exe
 *.old
 .last_yank.txt
 .trails
+PR*.md
 .bin/
 .bin
 *.bin

@@ -520,6 +520,71 @@ bool nob_mkdir_if_not_exists(const char *path)
     return true;
 }
 
+
+bool nob_mkdir_if_not_exists_recursive(const char *path)
+{
+    if (path == NULL || *path == '\0') {
+        return false;
+    }
+
+    nob_minimal_log_level = NOB_NO_LOGS;
+    char *path_buf = nob_temp_strdup(path);
+    size_t len = strlen(path_buf);
+    bool created = false;
+
+    // Remove trailing slashes
+    while (len > 0 && (path_buf[len - 1] == '/' || path_buf[len - 1] == '\\')) {
+        path_buf[--len] = '\0';
+    }
+
+    // Handle absolute paths on Windows (e.g., "C:\foo")
+    #ifdef _WIN32
+    if (len >= 2 && path_buf[1] == ':') {
+        if (len == 2) {  // Just a drive letter
+            return true;
+        }
+        // Skip drive letter and first slash if present
+        char *p = path_buf + 3;
+        if (*p == '/' || *p == '\\') p++;
+        for (; *p; p++) {
+            if (*p == '/' || *p == '\\') {
+                char save = *p;
+                *p = '\0';
+                created |= nob_mkdir_if_not_exists(path_buf);
+                *p = save;
+            }
+        }
+        created |= nob_mkdir_if_not_exists(path_buf);
+        return created;
+    }
+    #endif
+
+    // Handle absolute paths on Unix and relative paths on both systems
+    for (char *p = path_buf + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char save = *p;
+            *p = '\0';
+            created |= nob_mkdir_if_not_exists(path_buf);
+            *p = save;
+        }
+    }
+
+    created |= nob_mkdir_if_not_exists(path_buf);
+
+
+    nob_minimal_log_level = NOB_INFO;
+
+    if (!created) {
+        nob_log(NOB_ERROR, "could not create directories recursively `%s`: %s", path, strerror(errno));
+    } else {
+        nob_log(NOB_INFO, "created all directories `%s`", path);
+    }
+
+    
+    return created;
+}
+
+
 bool nob_copy_file(const char *src_path, const char *dst_path)
 {
     nob_log(NOB_INFO, "copying %s -> %s", src_path, dst_path);

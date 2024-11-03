@@ -243,7 +243,7 @@ Image GetClipboardImage(void)
 }
 
 
-static unsigned char* GetClipboardImageData(int* width, int* height, unsigned int *dataSize) 
+static unsigned char* GetClipboardImageData(int* width, int* height, unsigned int *dataSize)
 {
     HWND win = NULL; // Get from somewhere but is doesnt seem to matter
     const char* msgString = "";

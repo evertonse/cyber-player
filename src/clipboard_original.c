@@ -486,55 +486,55 @@ static void PutBitmapInClipboard_From32bppTopDownRGBAData(INT Width, INT Height,
 
 
 
-// // Bitmap will be copied, so you can do what you want with it after this function returns.
-// static void PutBitmapInClipboard_AsDIB(HBITMAP hBitmap)
-// {
-//     // Need this to get the bitmap dimensions.
-//     BITMAP desc = {};
-//     int tmp = GetObjectW(hBitmap, sizeof(desc), &desc);
-//     assert(tmp != 0);
-//
-//     // We need to build this structure in a GMEM_MOVEABLE global memory block:
-//     //   BITMAPINFOHEADER (40 bytes)
-//     //   PixelData (4 * Width * Height bytes)
-//     // We're enforcing 32bpp BI_RGB, so no bitmasks and no color table.
-//     // NOTE: SetClipboardData(CF_DIB) insists on the size 40 version of BITMAPINFOHEADER, otherwise it will misinterpret the data.
-//
-//     DWORD PixelDataSize = 4/*32bpp*/ * desc.bmWidth * desc.bmHeight; // Correct alignment happens implicitly.
-//     assert(desc.bmWidth > 0);
-//     assert(desc.bmHeight > 0);
-//     size_t TotalSize = sizeof(BITMAPINFOHEADER) + PixelDataSize;
-//     HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, TotalSize);
-//     assert(hGlobal);
-//     void *mem = GlobalLock(hGlobal);
-//     assert(mem);
-//
-//     BITMAPINFOHEADER *bih = (BITMAPINFOHEADER *)mem;
-//     bih->biSize = sizeof(BITMAPINFOHEADER);
-//     bih->biWidth = desc.bmWidth;
-//     bih->biHeight = desc.bmHeight;
-//     bih->biPlanes = 1;
-//     bih->biBitCount = 32;
-//     bih->biCompression = BI_RGB;
-//     bih->biSizeImage = PixelDataSize;
-//     HDC hdc = CreateCompatibleDC(NULL);
-//     assert(hdc);
-//     HGDIOBJ old = SelectObject(hdc, hBitmap);
-//     assert(old != NULL); // This can fail if the hBitmap is still selected into a different DC.
-//     void *PixelData = (BYTE *)mem + sizeof(BITMAPINFOHEADER);
-//     // Pathologial "bug": If the bitmap is a DDB that originally belonged to a device with a different palette, that palette is lost. The caller would need to give us the correct HDC, but this is already insane enough as it is.
-//     tmp = GetDIBits(hdc, hBitmap, 0, desc.bmHeight, PixelData, (BITMAPINFO *)bih, DIB_RGB_COLORS);
-//     assert(tmp != 0);
-//     // NOTE: This will correctly preserve the alpha channel if possible, but it's up to the receiving application to handle it.
-//     DeleteDC(hdc);
-//
-//     GlobalUnlock(hGlobal);
-//
-//     EmptyClipboard();
-//     SetClipboardData(CF_DIB, hGlobal);
-//
-//     // The hGlobal now belongs to the clipboard. Do not free it.
-// }
+// Bitmap will be copied, so you can do what you want with it after this function returns.
+static void PutBitmapInClipboard_AsDIB(HBITMAP hBitmap)
+{
+    // Need this to get the bitmap dimensions.
+    BITMAP desc = {};
+    int tmp = GetObjectW(hBitmap, sizeof(desc), &desc);
+    assert(tmp != 0);
+
+    // We need to build this structure in a GMEM_MOVEABLE global memory block:
+    //   BITMAPINFOHEADER (40 bytes)
+    //   PixelData (4 * Width * Height bytes)
+    // We're enforcing 32bpp BI_RGB, so no bitmasks and no color table.
+    // NOTE: SetClipboardData(CF_DIB) insists on the size 40 version of BITMAPINFOHEADER, otherwise it will misinterpret the data.
+
+    DWORD PixelDataSize = 4/*32bpp*/ * desc.bmWidth * desc.bmHeight; // Correct alignment happens implicitly.
+    assert(desc.bmWidth > 0);
+    assert(desc.bmHeight > 0);
+    size_t TotalSize = sizeof(BITMAPINFOHEADER) + PixelDataSize;
+    HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, TotalSize);
+    assert(hGlobal);
+    void *mem = GlobalLock(hGlobal);
+    assert(mem);
+
+    BITMAPINFOHEADER *bih = (BITMAPINFOHEADER *)mem;
+    bih->biSize = sizeof(BITMAPINFOHEADER);
+    bih->biWidth = desc.bmWidth;
+    bih->biHeight = desc.bmHeight;
+    bih->biPlanes = 1;
+    bih->biBitCount = 32;
+    bih->biCompression = BI_RGB;
+    bih->biSizeImage = PixelDataSize;
+    HDC hdc = CreateCompatibleDC(NULL);
+    assert(hdc);
+    HGDIOBJ old = SelectObject(hdc, hBitmap);
+    assert(old != NULL); // This can fail if the hBitmap is still selected into a different DC.
+    void *PixelData = (BYTE *)mem + sizeof(BITMAPINFOHEADER);
+    // Pathologial "bug": If the bitmap is a DDB that originally belonged to a device with a different palette, that palette is lost. The caller would need to give us the correct HDC, but this is already insane enough as it is.
+    tmp = GetDIBits(hdc, hBitmap, 0, desc.bmHeight, PixelData, (BITMAPINFO *)bih, DIB_RGB_COLORS);
+    assert(tmp != 0);
+    // NOTE: This will correctly preserve the alpha channel if possible, but it's up to the receiving application to handle it.
+    DeleteDC(hdc);
+
+    GlobalUnlock(hGlobal);
+
+    EmptyClipboard();
+    SetClipboardData(CF_DIB, hGlobal);
+
+    // The hGlobal now belongs to the clipboard. Do not free it.
+}
 
 
 char* GetClipboardImage(int* width, int* height, size_t *data_size) {
