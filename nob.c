@@ -294,7 +294,7 @@ void cmd_append_sdl(Cmd *cmd) {
         }
         case PLATFORM_SDL2: {
             nob_log(INFO, "Assuming SDL2 is system provided, both lib and headers");
-            cmd_append(cmd, "-I./src/vendor/SDL2/include/SDL2/", "-lSDL2", 
+            cmd_append(cmd, "-I./src/vendor/SDL2/include/SDL2/", "-lSDL2",
                        // "-lSDL2Main"
                        );
             break;
@@ -404,6 +404,7 @@ bool build_raylib() {
             case PLATFORM_SDL2: {
                 cmd_append(&cmd,
                     "-DPLATFORM_DESKTOP_SDL",
+                    "-D_REENTRANT",
                 );
                 cmd_append_sdl(&cmd); // Add flags and libs for sdl
                 // cmd_append(&cmd, "-lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 " "-lversion -lsetupapi -lwinmm -luuid");
@@ -682,17 +683,17 @@ bool build_examples(void) {
             for (int i = 0; (source = sources[i]); ++i) {
                 cmd_append(&cmd, source);
             }
-            // PLATFORM should probably be enum flags
-            if (PLATFORM_SDL2 == config.platform || PLATFORM_SDL3 == config.platform) {
-                cmd_append_sdl(&cmd);
-            }
             cmd_append(&cmd, "-L./", tprintf("-l:%s", config.libraylib_path), "-lm");
-
             cmd_append(&cmd, "-I./src/include");            // gui.h (our own), our headers etc...
             cmd_append(&cmd, "-I./src/vendor/fuzzy-match"); // fuzzy-match
             cmd_append(&cmd, "-I./src/vendor/");            // raygui.h
             cmd_append(&cmd, "-I./src/vendor/raylib/src");  // raylib.h
             cmd_append(&cmd, "-I./");                       // nob.h
+
+            // PLATFORM should probably be enum flags
+            if (PLATFORM_SDL2 == config.platform || PLATFORM_SDL3 == config.platform) {
+                cmd_append_sdl(&cmd);
+            }
 
             Proc proc = cmd_run_async(cmd);
             da_append(&procs, proc);
