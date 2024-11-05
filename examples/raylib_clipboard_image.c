@@ -40,6 +40,7 @@ int main(int argc, char *argv[]) {
     SetTargetFPS(60);
     Texture tex = {0};
     while(!WindowShouldClose()) {
+
         if (IsKeyPressed(KEY_H)) {
             curr = (curr-1) % (24);
             img.format = formats[curr];
@@ -55,7 +56,6 @@ int main(int argc, char *argv[]) {
             ImageColorContrast(&img, 40);
             // SetClipboardImage(img);
         } else if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_V) || IsKeyPressed(KEY_V)) {
-            #ifdef _WIN32
             img = GetClipboardImage();
             tex = LoadTextureFromImage(img);
             if(!IsTextureValid(tex)) {
@@ -65,7 +65,6 @@ int main(int argc, char *argv[]) {
             } else {
                 ExportImage(img, "Debug.bmp");
             }
-            #endif
         }
 
         BeginDrawing();

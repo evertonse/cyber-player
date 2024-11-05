@@ -468,7 +468,10 @@ bool build_raylib() {
             cmd_append(&cmd, input_path);
         }
         if (!cmd_run_sync(cmd)) return_defer(false);
+    } else {
+        nob_log(INFO, "OK %s: %s is up to date", __PRETTY_FUNCTION__, tmp_libraylib_path);
     }
+
 
     // TODO: Add better caching for the achiving SDL3_STATIC
     if (PLATFORM_SDL3 == config.platform && needs_rebuild(config.libraylib_path, object_files.items, object_files.count)) {
@@ -497,10 +500,7 @@ bool build_raylib() {
             };
         }
         nob_log(INFO, "OK: create %s %s", config.AR, __PRETTY_FUNCTION__);
-    } else {
-        nob_log(INFO, "OK %s: %s is up to date", __PRETTY_FUNCTION__, tmp_libraylib_path);
     }
-
 
 defer:
     cmd_free(cmd);
