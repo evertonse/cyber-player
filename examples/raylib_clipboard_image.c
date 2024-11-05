@@ -36,11 +36,8 @@ int curr = 0 % (24);
 
 static Image img = {0};
 int main(int argc, char *argv[]) {
-
     InitWindow(800, 450, "[core] raylib clipboard image");
-    SetTraceLogLevel(LOG_TRACE);
     SetTargetFPS(60);
-
     Texture tex = {0};
     while(!WindowShouldClose()) {
         if (IsKeyPressed(KEY_H)) {

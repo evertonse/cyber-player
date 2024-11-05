@@ -380,6 +380,8 @@ bool build_raylib() {
 
             cmd_append(&cmd,
                    "-fPIC",
+                   "-DSUPPORT_TRACELOG=1",
+                   "-DSUPPORT_TRACELOG_DEBUG=1",
                    "-DSUPPORT_CLIPBOARD_IMAGE=1",
                    "-DSUPPORT_FILEFORMAT_BMP=1",
                    #ifdef DEBUG_RAYLIB

@@ -23,7 +23,7 @@
 *           Custom flag for rcore on target platform -not used-
 *
 *   DEPENDENCIES:
-*       - SDL 2 (main library): Windowing and inputs management
+*       - SDL 2 or SLD 3 (main library): Windowing and inputs management
 *       - gestures: Gestures system for touch-ready devices (or simulated from mouse inputs)
 *
 *
@@ -397,8 +397,9 @@ int SDL_GetNumTouchFingers(SDL_TouchID touchID) {
 // Since SDL2 doesn't have this function we leave a stub
 // SDL_GetClipboardData function is available since SDL 3.1.3. (e.g. SDL3)
 void* SDL_GetClipboardData(const char *mime_type, size_t *size) {
-    TRACELOG(LOG_WARNING, "Getting clipboard data is only available in SDL3");
-    // We could possibly implement it ourselves in this case
+    // TRACELOG(LOG_WARNING, "Getting clipboard data is only available in SDL3");
+    TRACELOG(LOG_ERROR, "Getting clipboard data is only available in SDL3");
+    // We could possibly implement it ourselves in this case for some easier platforms
     return NULL;
 }
 
