@@ -495,7 +495,7 @@ static int closedir(DIR *dirp);
 // minirent.h HEADER END ////////////////////////////////////////
 
 #undef PATH_MAX
-#define PATH_MAX 1024 // The default is 256 on some systems headers, and might be too small nowadays
+#define PATH_MAX 2048 // The default is 256 on some systems headers, and might be too small nowadays
 
 #endif // NOB_H_
 
@@ -1613,6 +1613,10 @@ int nob_needs_rebuild(const char *output_path, const char **input_paths, size_t 
     return 0;
 #else
     struct stat statbuf = {0};
+
+    if (!nob_file_exists(output_path)) {
+        return 1;
+    }
 
     if (stat(output_path, &statbuf) < 0) {
         // NOTE: if output does not exist it 100% must be rebuilt

@@ -237,7 +237,7 @@ bool sdl_redefine_symbol_in_lib(const char *static_lib_path) {
         return false;
     }
 
-    nob_log(INFO, "\nRedefined symbols at `%s` with success\n", static_lib_path);
+    nob_log(INFO, "Redefined symbols from `%s` with success\n", static_lib_path);
     return true;
 }
 
@@ -286,7 +286,7 @@ void cmd_append_sdl(Cmd *cmd) {
                        #endif
                        "-lgdi32", "-lole32", "-lcfgmgr32",
                        "-limm32", "-loleaut32", "-lversion", "-lsetupapi",
-                       "-lwinmm",
+                       "-lwinmm", "-luuid",
                        "-static"
                 );
             } else {
@@ -469,7 +469,7 @@ bool build_raylib() {
         }
         if (!cmd_run_sync(cmd)) return_defer(false);
     } else {
-        nob_log(INFO, "OK %s: %s is up to date", __PRETTY_FUNCTION__, tmp_libraylib_path);
+        nob_log(INFO, "%s: `%s` is up to date", __PRETTY_FUNCTION__, config.libraylib_path);
     }
 
 
@@ -499,8 +499,9 @@ bool build_raylib() {
                 nob_log(INFO, "Success copying from %s to %s", libsdl3_dll_path, BUILD_DIR);
             };
         }
-        nob_log(INFO, "OK: create %s %s", config.AR, __PRETTY_FUNCTION__);
     }
+
+    nob_log(INFO, "OK: %s", __PRETTY_FUNCTION__);
 
 defer:
     cmd_free(cmd);
@@ -682,12 +683,13 @@ bool build_examples(void) {
         }
         String_View example_bin = sv_from_cstr(cstr_example_bin);
         const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
-        const char *sources[] = {example, tprintf("-o%s", dst), NULL};
-        if (needs_rebuild(dst, sources, ARRAY_LEN(sources) - 1/* dont count null terminator*/)) {
+        const char *sources[] = {example, NULL};
+        if (needs_rebuild(dst, sources, ARRAY_LEN(sources) - 1 /* dont count null terminator*/)) {
             const char* source = NULL;
             for (int i = 0; (source = sources[i]); ++i) {
                 cmd_append(&cmd, source);
             }
+            cmd_append(&cmd, "-o", dst);
             cmd_append(&cmd, "-L./", tprintf("-l:%s", config.libraylib_path), "-lm");
             cmd_append(&cmd, "-I./src/include");            // gui.h (our own), our headers etc...
             cmd_append(&cmd, "-I./src/vendor/fuzzy-match"); // fuzzy-match
