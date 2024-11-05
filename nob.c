@@ -17,33 +17,12 @@
 #define BIN "main"
 
 
-
-// #define AR     "x86_64-w64-mingw32-ar"
-#define AR "ar"
-// #define PLATFORM_SDL
-// #define PLATFORM_RGFW
-
-#define RAYLIB_BUILD_DIR BUILD_DIR "/raylib"
-#define RAYLIB_SOURCE_DIR "./src/vendor/raylib/src"
-
-
-static const char *raylib_modules[] = {
-    "rcore",   "raudio", "rglfw",     "rmodels",
-    "rshapes", "rtext",  "rtextures", "utils",
-};
-
-#if (defined(__MINGW64__) || defined(__MINGW32__))
-    static const char *CC = "x86_64-w64-mingw32-gcc";
-#else
-    static const char *CC = "gcc";
-#endif
-
 static struct {
+    bool mingw32;
+    bool mingw64;
     bool run;
     bool examples;
     bool cyber_player;
-    bool clip;
-    bool mingw;
     struct {
         bool mpv;
         bool glib;
@@ -51,7 +30,55 @@ static struct {
     } libs;
 } flags = {0};
 
-static const char *libraylib_path = NULL;
+typedef enum {
+    PLATFORM_UNSET = 0x0,
+    PLATFORM_SDL3,
+    PLATFORM_SDL2,
+    PLATFORM_RGFW,
+    PLATFORM_GLFW,
+} Platform;
+
+static struct {
+    const char *CC, *AR, *OBJCOPY; // Must be gnu flag compliant for all of these binaries
+    const char *libraylib_path; // libraylib.a
+    Platform platform;
+} config = 
+#if defined(__MINGW32__) || defined(__MINGW64__)
+{
+    // Default
+    .CC       = "gcc",
+    .AR       = "ar",
+    .OBJCOPY  = "objcopy",
+    .libraylib_path = NULL,
+    .platform = PLATFORM_SDL3
+};
+#else
+{
+    // Default
+    .CC       = "gcc",
+    .AR       = "ar",
+    .OBJCOPY  = "objcopy",
+    .libraylib_path = NULL,
+    .platform = PLATFORM_SDL2
+};
+#endif
+
+
+
+#define SDL3_VERSION "SDL3-3.1.6-x86_64-w64-mingw64-patched" // Fix SDL_GetClipboardData()
+    // #define SDL3_VERSION "SDL3-3.1.3-x86_64-w64-mingw32"
+    // #define SDL3_VERSION "SDL3-x86_64-w64-mingw32"
+// #define PLATFORM_RGFW
+
+#define RAYLIB_SOURCE_DIR "./src/vendor/raylib/src"
+
+
+static const char *raylib_modules[] = {
+    "rcore",   "raudio", "rmodels",
+    "rshapes", "rtext",  "rtextures", "utils",
+    "rglfw",
+};
+
 
 // regex: "raylib_.*\.c"
 static bool filter_base_name_starts_with_raylib_and_ends_with_dot_c(const char *path, void *user_data)
@@ -80,12 +107,14 @@ static bool filter_base_name_starts_with_raylib_and_ends_with_dot_c(const char *
 #endif
 
 typedef Nob_Cmd CStr_Array;
-// Gen without the []
-void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
 
-    // char* out =  tprintf("%s%s\0",
+void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
+#if 0
     char root_dir[PATH_MAX];
     realpath("./", root_dir);
+#else
+    const char *root_dir = nob_absolute_path("./");
+#endif
 
     sb_printf(sb,
         "  {\n"
@@ -119,7 +148,7 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
             "GUI_IMPLEMENTATION", "NOB_STRIP_PREFIX", "NOB_IMPLEMENTATION",
             "RAYGUI_IMPLEMENTATION", "RAYGUI_MO_IMPLEMENTATION",
             "RLGL_IMPLEMENTATION",
-
+            "SUPPORT_CLIPBOARD_IMAGE",
             "GUI_FILE_DIALOG_IMPLEMENTATION",
             "GUI_WINDOW_FILE_DIALOG_IMPLEMENTATION",
 
@@ -180,43 +209,98 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
     sb_append_cstr(sb, "  }\n");
 }
 
-bool build_clipboard() {
+
+// Use objcopy to redefine conflicting symbols with raylib (--redefine-sym old=new)
+bool sdl_redefine_symbol_in_lib(const char *static_lib_path) {
+    if (!flags.mingw32) {
+        assert(0 && "untested otherwise");
+    }
+    
     Cmd cmd = {0};
-
-    bool result = true;
-    const char* dir = BUILD_DIR"/clipboard";
-    nob_mkdir_if_not_exists(dir);
-
-    const char *objpath = tprintf("%s/clipboard.o", dir);
-    const char *src = tprintf("%s/clipboard.c", SRC_DIR);
-
+    cmd_append(&cmd, config.OBJCOPY);
     {
-        cmd_append(&cmd, CC, "-c", src);
-        cmd_append(&cmd, "-fPIC", tprintf("%s%s","-o", objpath), "-lgdi32");
-        if (!cmd_run_sync(cmd)) return_defer(false);
-        nob_log(INFO, "OK: %s %s",CC, __PRETTY_FUNCTION__);
-    }
-
-    {
-        cmd.count = 0;
-        const char *libpath = tprintf("%s/libclipboard.a", dir);
-        File_Paths object_files = {0};
-        da_append(&object_files, objpath);
-        if (needs_rebuild(libpath, object_files.items, object_files.count)) {
-            cmd_append(&cmd, AR, "-crs", libpath);
-
-            for (int idx = 0; idx < object_files.count; idx += 1) {
-                cmd_append(&cmd, object_files.items[idx]);
-            }
-
-            if (!cmd_run_sync(cmd)) return_defer(false);
+        const char *math_symbols[] = {"MatrixIdentity", "MatrixMultiply"};
+        for (int idx = 0; idx < ARRAY_LEN(math_symbols); idx += 1) {
+            cmd_append(&cmd, "--redefine-sym");
+            cmd_append(&cmd,
+                tprintf("%s=SDLmath_%s", math_symbols[idx], math_symbols[idx])
+            );
         }
-        nob_log(INFO, "OK: %s %s", AR, __PRETTY_FUNCTION__);
+    }
+    cmd_append(&cmd, static_lib_path);
+
+    if(!cmd_run_sync(cmd)) {
+        nob_log(ERROR, "Failed to redefined symbols at `%s`", static_lib_path);
+        return false;
     }
 
-defer:
-    cmd_free(cmd);
-    return result;
+    nob_log(INFO, "\nRedefined symbols at `%s` with success\n", static_lib_path);
+    return true;
+}
+
+//
+// Basically this command
+// ar crsT libAB.a libA.a libB.a
+// MSVC version but unimplemented
+// lib.exe /OUT:libab.lib liba.lib libb.lib
+//
+void concat_static_libs(const char* out, const char** libs) {
+    Cmd cmd = {0};
+    cmd_append(&cmd, config.AR, "crsT", out);
+
+    const char *lib = NULL;
+    while ((lib = libs++[0])) {
+        cmd_append(&cmd, lib);
+    }
+
+    if(cmd_run_sync(cmd)) {
+        nob_log(INFO, "OK: %s", __PRETTY_FUNCTION__);
+    }
+
+}
+
+
+void cmd_append_sdl(Cmd *cmd) {
+    if (PLATFORM_SDL3 != config.platform && PLATFORM_SDL2 != config.platform) {
+        nob_log(ERROR, "Tried to append SDL libs to a build that is not for SDL");
+        exit(420);
+    }
+
+    switch (config.platform) {
+        case PLATFORM_SDL3: {
+            if (flags.mingw32) {
+                const char *base_dir =  "src/vendor/SDL3/"SDL3_VERSION;
+
+                // const char *base_dir =  "src/vendor/SDL3/SDL3-3.1.6-x86_64-w64-mingw32";
+                cmd_append(cmd, 
+                       tprintf("-I./%s/include/SDL3/", base_dir), // Make #include "SDL.h" possible
+                       tprintf("-I./%s/include/",      base_dir), // Allow #include  "SLD3/SDL_something.h"
+                       tprintf("-L./%s/lib/",          base_dir), // Where the static libs lie
+                       #ifdef SDL_STATIC
+                       "-l:libSDL3.a",
+                       #else
+                       "-l:libSDL3.dll.a",
+                       #endif
+                       "-lgdi32", "-lole32", "-lcfgmgr32",
+                       "-limm32", "-loleaut32", "-lversion", "-lsetupapi",
+                       "-lwinmm",
+                       "-static"
+                );
+            } else {
+                nob_log(INFO, "SDL3 if only supported on mingw rn");
+                exit(89);
+            }
+            break;
+        }
+        case PLATFORM_SDL2: {
+            nob_log(INFO, "SDL2 must be system provided, both lib and headers");
+            cmd_append(cmd, "-I./src/vendor/SDL2/include/SDL2/", "-lSDL2", "-lSDL2Main");
+            break;
+        }
+        default: {
+            TODO("Better error msg here");
+        }
+    }
 }
 
 bool build_raylib() {
@@ -235,110 +319,179 @@ bool build_raylib() {
     // }
 
     const char *build_path = "";
-    if (flags.mingw) {
-        build_path = tprintf("%s"PATH_SEPARATOR"%s", RAYLIB_BUILD_DIR, "mingw");
-    } else {
-        build_path = tprintf("%s"PATH_SEPARATOR"%s", RAYLIB_BUILD_DIR, "linux");
+    {
+        const char *raylib_platform_name = "";
+        const char *tools_platform_name = "";
+        if (flags.mingw32) {
+            tools_platform_name = "mingw32";
+        } else if (flags.mingw64) {
+            tools_platform_name = "mingw64";
+        } else {
+            tools_platform_name = "linux";
+        }
+
+        switch (config.platform) {
+            case PLATFORM_SDL3: raylib_platform_name = "SDL3"; break;
+            case PLATFORM_SDL2: raylib_platform_name = "SDL2"; break;
+            default: PANIC("Unhandled Raylib Platform");
+        }
+
+        build_path = tprintf("%s/%s/%s", BUILD_DIR, tools_platform_name,  raylib_platform_name);
+
+        config.libraylib_path = strdup(tprintf("%s/libraylib.a", build_path));
     }
+
 
 
     if (!nob_mkdir_if_not_exists_recursive(build_path)) {
         return_defer(false);
     }
 
-    Procs procs = {0};
 
+    //-----------------------------------------------------------------------//
+    //-------------------------OBJFILES--------------------------------------//
+    //-----------------------------------------------------------------------//
+
+    Procs procs = {0};
     for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
-        const char *input_path =
-            temp_sprintf(RAYLIB_SOURCE_DIR"/%s.c", raylib_modules[i]);
-        const char *output_path =
-            temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+        const char* module = raylib_modules[i];
+        bool skip_rglfw = PLATFORM_GLFW != config.platform && 0 == strcmp(module, "rglfw");
+        if (skip_rglfw) continue;
+
+        const char *input_path  = tprintf("%s/%s.c", RAYLIB_SOURCE_DIR, module);
+        const char *output_path = tprintf("%s/%s.o", build_path, module);
 
         da_append(&object_files, output_path);
 
         if (
             needs_rebuild(output_path, header_files.items, header_files.count)
             || needs_rebuild(output_path, c_files.items, c_files.count)
-            || needs_rebuild(output_path, &input_path, 1)
+            || needs_rebuild1(output_path, input_path)
         ) {
             cmd.count = 0;
-            cmd_append(&cmd, CC);
-            if (flags.mingw) cmd_append(&cmd, "-mwindows");
+            cmd_append(&cmd, config.CC);
+
+            // cmd_append(&cmd, "-mwindows"); // Entry Point: It changes the entry point of the application from main to WinMain, which is the standard entry point for Windows GUI applications.
 
             cmd_append(&cmd,
-                       "-fPIC",
-        #ifdef PLATFORM_SDL
-                       "-DPLATFORM_DESKTOP_SDL",
-        #elif defined(PLATFORM_RGFW)
-                       "-DPLATFORM_DESKTOP_RGFW",
-        #else
-                       "-DPLATFORM_DESKTOP",
-        #endif
-
-                       "-DSUPPORT_CLIPBOARD_IMAGE=1",
-                       "-DSUPPORT_FILEFORMAT_BMP=1",
-                       #ifdef DEBUG_RAYLIB
-                           "-ggdb",
-                           "-DRLGL_SHOW_GL_DETAILS_INFO=1"
-                        #endif
-                       "-DSUPPORT_FILEFORMAT_FLAC=1"
+                   "-fPIC",
+                   "-DSUPPORT_CLIPBOARD_IMAGE=1",
+                   "-DSUPPORT_FILEFORMAT_BMP=1",
+                   #ifdef DEBUG_RAYLIB
+                       "-ggdb",
+                       "-DRLGL_SHOW_GL_DETAILS_INFO=1"
+                    #endif
+                   "-DSUPPORT_FILEFORMAT_FLAC=1"
+                   "-fmax-errors=5"
             );
 
-            cmd_append(&cmd, "-fmax-errors=5");
-            if (!flags.mingw) {
-                cmd_append(&cmd, "-D_GLFW_X11");
+            switch (config.platform) {
+            case PLATFORM_SDL3: {
+                // -Wl,--enable-auto-import
+                // -Wl,--allow-shlib-undefined -Wl,--unresolved-symbols=ignore-all
+                cmd_append(&cmd,
+                    "-DPLATFORM_DESKTOP_SDL",
+                    "-DSDL_ENABLE_OLD_NAMES" // Compatility Layer for easy of migration
+                );
+                cmd_append_sdl(&cmd); // Add flags and libs for sdl
+                // cmd_append(&cmd, "-lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 " "-lversion -lsetupapi -lwinmm -luuid");
+                // TODO: Compile SLD3 statically in mingw
+                cmd_append(&cmd, "-static");
+                break;
             }
-
-            // cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR"external/glfw/include");
-#define CURRENT_FULL_PATH "C:/msys64/home/Administrator/code/unamed-video"
-        #ifdef PLATFORM_SDL
-            cmd_append(&cmd,
-                   // "-l:C:/msys64/mingw64/lib/libSDL2.a",
-                   // "-IC:/msys64/mingw64/include/SDL2"
-                   // "-lSDL2", "-lSDL2Main",
-
-
-                   "-l:"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/lib/SDL3.lib",
-                   "-I"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/include/SDL3"
-                   // "-I"CURRENT_FULL_PATH"/src/vendor/SDL3-x64-windows/include/"
-                   // "-I/mingw64/include/SDL2"
-            );
-
-        #elif defined(PLATFORM_RGFW)
-            cmd_append(&cmd, "-lgdi32", "-lopengl32");
-        #endif
-            cmd_append(&cmd, tprintf("-I%s", RAYLIB_SOURCE_DIR"/external/glfw/include"));
+            case PLATFORM_SDL2: {
+                cmd_append(&cmd,
+                    "-DPLATFORM_DESKTOP_SDL",
+                );
+                cmd_append_sdl(&cmd); // Add flags and libs for sdl
+                // cmd_append(&cmd, "-lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 " "-lversion -lsetupapi -lwinmm -luuid");
+                break;
+            }
+            case PLATFORM_RGFW: {
+                TODO("NOOO");
+                cmd_append(&cmd,
+                    "-DPLATFORM_DESKTOP_RGFW",
+                    "-lgdi32", "-lopengl32"
+                );
+                break;
+            } case PLATFORM_GLFW: {
+                TODO("NOOO");
+                cmd_append(&cmd, tprintf("-I%s", RAYLIB_SOURCE_DIR"/external/glfw/include"));
+                cmd_append(&cmd,
+                    "-DPLATFORM_DESKTOP",
+                );
+                break;
+            }
+                default: PANIC("Unhandled Raylib Platform");
+            }
             cmd_append(&cmd, "-c", input_path);
             cmd_append(&cmd, "-o", output_path);
-
-            if(false || flags.mingw) {
-                cmd_append(&cmd, "-lwinmm", "-lgdi32");
-                cmd_append(&cmd, "-static");
-            }
 
             Proc proc = cmd_run_async(cmd);
             da_append(&procs, proc);
         }
     }
 
-    cmd.count = 0;
 
     if (!procs_wait(procs)) return_defer(false);
-
     nob_log(INFO, "OK: waited procs %s", __PRETTY_FUNCTION__);
 
-    libraylib_path = strdup(tprintf("%s/libraylib.a", build_path));
 
-    if (needs_rebuild(libraylib_path, object_files.items, object_files.count)) {
-        cmd_append(&cmd, AR, "-crs", libraylib_path);
+    //-----------------------------------------------------------------------//
+    //-------------------------(AR)CHIVING-----------------------------------//
+    //-----------------------------------------------------------------------//
+
+
+    const char *tmp_libraylib_path = config.libraylib_path;
+    if (PLATFORM_SDL3 == config.platform) {
+        tmp_libraylib_path = tprintf("%s/libtmpraylib.a", build_path);
+        nob_remove_file_if_exists(tmp_libraylib_path);
+    }
+
+    cmd.count = 0;
+    if (needs_rebuild(config.libraylib_path, object_files.items, object_files.count)) {
+        cmd_append(&cmd, config.AR, "-crs", tmp_libraylib_path);
         for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
-            const char *input_path = tprintf("%s/%s.o", build_path, raylib_modules[i]);
+            const char* module = raylib_modules[i];
+            bool skip_rglfw = PLATFORM_GLFW != config.platform && 0 == strcmp(module, "rglfw");
+            if (skip_rglfw) continue;
+
+            const char *input_path = tprintf("%s/%s.o", build_path, module);
             cmd_append(&cmd, input_path);
         }
-
         if (!cmd_run_sync(cmd)) return_defer(false);
     }
-    nob_log(INFO, "OK: create AR %s", __PRETTY_FUNCTION__);
+
+    // TODO: Add better caching for the achiving SDL3_STATIC
+    if (PLATFORM_SDL3 == config.platform && needs_rebuild(config.libraylib_path, object_files.items, object_files.count)) {
+        //
+        // We  need remove coliding symbols (with raylib) from static SDL3
+        // Then concat both static lib, raylib and SDL3 into a single libraylib.a
+        //
+        {
+            // Preserve the original SDL lib
+            const char *libsdl3_path = "./src/vendor/SDL3/" SDL3_VERSION "/lib/libSDL3.a";
+            const char *libsdl3_patched_path = tprintf("%s/%s", build_path, "libSDL3.a");
+            copy_file(libsdl3_path, libsdl3_patched_path);
+            sdl_redefine_symbol_in_lib(libsdl3_patched_path);
+
+            const char *libs[] = {tmp_libraylib_path, libsdl3_patched_path, NULL};
+            concat_static_libs(config.libraylib_path, libs);
+        }
+
+        {   // if we're linking dynamically and we're on windows we need to do this
+            const char *libsdl3_dll_path = "./src/vendor/SDL3/" SDL3_VERSION "/bin/SDL3.dll";
+            if (!nob_copy_file(libsdl3_dll_path, BUILD_DIR"/SDL3.dll")) {
+                nob_log(ERROR, "Failure copying from %s to %s", libsdl3_dll_path, BUILD_DIR"/SDL3.dll");
+                exit(90);
+            } else {
+                nob_log(INFO, "Success copying from %s to %s", libsdl3_dll_path, BUILD_DIR);
+            };
+        }
+        nob_log(INFO, "OK: create %s %s", config.AR, __PRETTY_FUNCTION__);
+    } else {
+        nob_log(INFO, "OK %s: %s is up to date", __PRETTY_FUNCTION__, tmp_libraylib_path);
+    }
 
 
 defer:
@@ -347,6 +500,7 @@ defer:
     return result;
 }
 
+#if 0
 bool build_with_libs(const char *sources[]) {
     bool should_build_clipboard = false;
     bool result = true;
@@ -389,14 +543,8 @@ bool build_with_libs(const char *sources[]) {
     cmd_append(&cmd, "-DDEBUG");
 
 
-
-
-    cmd_append(&cmd,
-        // "-Wall",
-        // "-Wextra"
-    );
     #if defined(DEBUG)
-        cmd_append(&cmd, "-O0", "-ggdb");
+        cmd_append(&cmd, "-O0", "-ggdb", "-Wextra" "-Wall",);
     #elif  defined(RELEASE)
         cmd_append(&cmd, "-O3");
     #endif
@@ -409,34 +557,26 @@ bool build_with_libs(const char *sources[]) {
     // if (flags.libs.raylib) cmd_append(&cmd, "-I" RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  "-l:./"RAYLIB_BUILD_DIR"/libraylib.a", "-lpthread", "-lm");
     if (flags.libs.raylib) {
         assert(libraylib_path != NULL);
-        cmd_append(&cmd, "-I" RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  tprintf("-l:%s", libraylib_path), "-lpthread", "-lm");
+        cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  tprintf("-l:%s", libraylib_path), "-lpthread", "-lm");
     }
 
+    #ifdef PLATFORM_SDL3
+        cmd_append_sdl(&cmd);
+    #elif defined(PLATFORM_RGFW)
+        cmd_append(&cmd,
+               "-lgdi32",
+               "-lopengl32",
+        );
+    #endif
 
-        #ifdef PLATFORM_SDL
-            cmd_append(&cmd,
-                   // "-LC:/msys64/mingw64/lib/",
-                   // "-l:C:/msys64/mingw64/lib/libSDL2.a",
-                   "-lSDL2", "-lSDL2Main",
-                   // "-IC:/msys64/mingw64/include/SDL2"
-                   // "-I/mingw64/include/SDL2"
-            );
-        #elif defined(PLATFORM_RGFW)
-            cmd_append(&cmd,
-                   "-lgdi32",
-                   "-lopengl32",
-            );
-        #endif
-
-    if (flags.mingw) {
+    if (flags.mingw32) {
         if (should_build_clipboard) {
             cmd_append(&cmd,"-DSUPPORT_CLIPBOARD_IMAGE=1");
             cmd_append(&cmd,"-L./", "-l:./"BUILD_DIR"/clipboard/libclipboard.a");
         }
-        cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/usr/include/SDL2", "-I/mingw64/include");
-        // cmd_append(&cmd, "-lglfw3");
-        // cmd_append(&cmd, "-lopengl32");
-        cmd_append(&cmd, "-lwinmm", "-lgdi32");
+        cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/mingw64/include");
+        cmd_append(&cmd, "-lwinmm", "-lgdi32", "-luuid");
+        cmd_append(&cmd, "-lopengl32");
         //
         // NOTE: It can't be static since we don't compile mpv into a lib.a
         // cmd_append(&cmd, "-static");
@@ -487,28 +627,13 @@ defer:
     da_free(procs);
     return result;
 }
-
-bool build_clip(void) {
-    build_raylib() || (exit(69), 0);
-    Cmd cmd = {0};
-
-    cmd_append(&cmd,
-               "gcc", "./src/clipboard_original.c", "-c",
-               "-oclipboard_original.o", "-lgdi32", "-lwinmm");
-    if (!cmd_run_sync_and_reset(&cmd)) return 1;
-
-    cmd_append(&cmd,
-               "gcc", "examples/raylib_clipboard_image.c",
-               "clipboard_original.o", "-lraylib", "-lgdi32",
-               "-lwinmm"
-    );
-
-    return cmd_run_sync(cmd);
-}
+#endif
 
 bool build_examples(void) {
     Cmd cmd = {0};
     File_Paths c_files = {0};
+    if (config.libraylib_path == NULL) {
+    }
 
     //
     // Before activating again do this somehow
@@ -532,9 +657,14 @@ bool build_examples(void) {
         filter_base_name_starts_with_raylib_and_ends_with_dot_c,
         "raylib_"
     );
-    // da_append(&c_files, "./examples/rectangle_rounded_gradient.c");
 
+    Procs procs = {0};
+    // da_append(&c_files, "./examples/rectangle_rounded_gradient.c");
     for (int idx = 0; idx < c_files.count; idx += 1) {
+        cmd.count = 0;
+        cmd_append(&cmd, config.CC);
+        cmd_append(&cmd, "-fmax-errors=5");
+
         const char *example = c_files.items[idx];
         char* cstr_example_bin = basename((char*)strdup(example));
         String_View example_sv = sv_from_cstr(example);
@@ -546,84 +676,49 @@ bool build_examples(void) {
         const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
         const char *sources[] = {example, tprintf("-o%s", dst), NULL};
         if (needs_rebuild(dst, sources, ARRAY_LEN(sources) - 1/* dont count null terminator*/)) {
-            bool ok = build_with_libs(sources);
-            if (!ok) {
-                nob_log(ERROR, "We errored out on example=%s dst=%s", example, dst);
-                exit(1);
+            const char* source = NULL;
+            for (int i = 0; (source = sources[i]); ++i) {
+                cmd_append(&cmd, source);
             }
+            // PLATFORM should probably be enum flags
+            if (PLATFORM_SDL2 == config.platform || PLATFORM_SDL3 == config.platform) {
+                cmd_append_sdl(&cmd);
+            }
+            cmd_append(&cmd, "-L./", tprintf("-l:%s", config.libraylib_path), "-lm");
+
+            cmd_append(&cmd, "-I./src/include");            // gui.h (our own), our headers etc...
+            cmd_append(&cmd, "-I./src/vendor/fuzzy-match"); // fuzzy-match
+            cmd_append(&cmd, "-I./src/vendor/");            // raygui.h
+            cmd_append(&cmd, "-I./src/vendor/raylib/src");  // raylib.h
+            cmd_append(&cmd, "-I./");                       // nob.h
+
+            Proc proc = cmd_run_async(cmd);
+            da_append(&procs, proc);
         }
     }
+
+    if (!procs_wait(procs)) return false;
+
+    nob_log(INFO, "OK: waited procs %s", __PRETTY_FUNCTION__);
+
     return true;
 }
 
-int main(int argc, char **argv) {
-    NOB_GO_REBUILD_URSELF(argc, argv);
-    // printf("nob_type=%s\n", nob_get_file_type("dashdjhasdash"));
 
-    const char *program = shift_args(&argc, &argv);
-
-    flags.libs.raylib = true;
-    if (argc == 0) {
-        flags.cyber_player = true;
-    }
-    #if defined (__MINGW64__)
-            flags.mingw = true;
-    #endif
-
-
-    const char* arg = "";
-    while (argc > 0) {
-        arg = shift_args(&argc, &argv);
-        String_View arg_sv = sv_from_cstr(arg);
-
-        if(sv_eq(arg_sv, sv_from_cstr("mingw"))) {
-            CC = "x86_64-w64-mingw32-gcc";
-            flags.mingw = true;
-        } if(sv_eq(arg_sv, sv_from_cstr("run"))) {
-            flags.run = true;
-        } else if(sv_eq(arg_sv, sv_from_cstr("clip"))) {
-            flags.clip = true;
-        } else if(sv_eq(arg_sv, sv_from_cstr("examples"))) {
-            if (argc == 0) {
-                flags.examples = true;
-            } else {
-                nob_log(ERROR, "Expected not more satuff");
-                exit(1);
-            }
-            // run = true;
-        } else if(sv_eq(arg_sv, sv_from_cstr("cc="))) {
-            if (argc == 0) {
-                nob_log(ERROR, "Expected compiler name");
-                exit(1);
-            } else {
-                CC = shift_args(&argc, &argv);
-                flags.examples = true;
-            }
-
-        }
-    }
-
-    const char *file = "";
-    if (argc > 0) {
-        file = shift_args(&argc, &argv);
-    }
-
-    const char *raylib = "";
-    if (argc > 0) {
-        file = shift_args(&argc, &argv);
-    }
-
+int build() {
     nob_log(INFO, "Making directory for build `%s`", BUILD_DIR);
     if (!mkdir_if_not_exists(BUILD_DIR)) return false;
 
+    // Default, always check and build
     if (!build_raylib()) return 1;
 
     if (flags.cyber_player) {
+        TODO("flags.cyber_player");
 
         flags.libs.mpv = true;
         {
             const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
-            if (!build_with_libs(sources)) return 1;
+            // if (!build_with_libs(sources)) return 1;
         }
         flags.libs.mpv = false;
     }
@@ -634,11 +729,12 @@ int main(int argc, char **argv) {
 
     if (flags.run) {
         Cmd cmd = {0};
+        TODO("WAITING");
 
 #if (defined(__MINGW64__) || defined(__MINGW32__))
         const char *playfile =
             "\\Users\\Administrator\\Downloads\\cat_falls_ass_on_camera.mp4";
-        cmd_append(&cmd, temp_sprintf("%s.exe", BUILD_DIR "/" BIN));
+        cmd_append(&cmd, tprintf("%s.exe", BUILD_DIR "/" BIN));
 #else
         const char *playfile = "~/media/videos/life_is_everything.mp4";
         cmd_append(&cmd, BUILD_DIR "/" BIN);
@@ -647,5 +743,57 @@ int main(int argc, char **argv) {
         if (!cmd_run_sync(cmd)) return -1;
     }
 
-    return 0;
 }
+
+// TODO: clean option
+int main(int argc, char **argv) {
+    NOB_GO_REBUILD_URSELF(argc, argv);
+
+    const char *program = shift_args(&argc, &argv);
+
+    flags.libs.raylib = true;
+    if (argc == 0) {
+        // flags.cyber_player = true; // Not enable for now, we're in trasition
+    }
+
+    const char* arg = "";
+    while (argc > 0) {
+        arg = shift_args(&argc, &argv);
+        String_View arg_sv = sv_from_cstr(arg);
+
+        if (sv_eq_cstr(arg_sv, "mingw")) {
+            config.CC       = "x86_64-w64-mingw32-gcc";
+            config.AR       = "x86_64-w64-mingw32-ar";
+            config.OBJCOPY  = "x86_64-w64-mingw32-objcopy";
+            config.platform = PLATFORM_SDL3;
+            flags.mingw32   = true;
+        } if (sv_eq_cstr(arg_sv, "run")) {
+            flags.run = true;
+        } else if (sv_eq_cstr(arg_sv, "clip")) {
+            TODO("NO CLIP");
+        } else if (sv_eq_cstr(arg_sv, "examples")) {
+            flags.examples = true;
+        } else if (sv_eq_cstr(arg_sv, "CC")) {
+            if (argc == 0) {
+                nob_log(ERROR, "Expected compiler name after (e.g. CC clang)");
+                exit(1);
+            } else {
+                config.CC = shift_args(&argc, &argv);
+                flags.examples = true;
+            }
+        }
+    }
+
+    return build();
+}
+
+// x86_64-w64-mingw32-gcc ./examples/raylib_circle.c -o.build/raylib_circle -fmax-errors=5 -DSOFTWARE_RENDERER -D_REENTRANT -DDEBUG -I. -I./src/include/ -pthread -I./src/vendor/raylib/src -I./src/vendor/ -L./ -l:.build/raylib/mingw/libraylib.a -l:./.build/raylib/mingw/libraylib.a -l:./src/vendor/SDL3/SDL3-x86_64-w64-mingw32/lib/libSDL3.a -lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 -lversion -lsetupapi -lwinmm -luuid
+// x86_64-w64-mingw32-gcc ./examples/raylib_circle.c -o.build/raylib_circle -fmax-errors=5 -DSOFTWARE_RENDERER -D_REENTRANT -DDEBUG -I. -I./src/include/ -pthread -I./src/vendor/raylib/src -I./src/vendor/ -L./ -l:./.build/raylib/mingw/libraylib.a  -lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 -lversion -luuid -lsetupapi -lwinmm -l:./src/vendor/SDL3/SDL3-x86_64-w64-mingw32/lib/libSDL3.dll.a
+// /bin/x86_64-w64-mingw32-gcc ./examples/raylib_clipboard_image.c -I ./src/vendor/raylib/src -L./ -l:./concat.a -lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 -lversion -lsetupapi -lwinmm -Wl,--allow-shlib-undefined -luuid
+// x86_64-w64-mingw32-objcopy --redefine-sym MatrixMultiply=SDLmath_MatrixMultiply concat.a
+// ./examples/raylib_clipboard_image.c -I ./src/vendor/raylib/src -L./ -l:./concat.a -lgdi32 -lole32 -lcfgmgr32 -limm32 -loleaut32 -lversion -lsetupapi -lwinmm -Wl,--allow-shlib-undefined -luuid
+// SDL3 required libs on windows kernel32 user32 gdi32 winmm imm32 ole32 oleaut32 version uuid advapi32 setupapi shell32)
+// mingw-w64-clang-i686-cc mingw-w64-clang-i686-cmake mingw-w64-clang-i686-ninja  mingw-w64-clang-i686-pkg-config mingw-w64-clang-i686-clang-tools-extra
+// mingw-w64-x86_64-cc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja  mingw-w64-x86_64-pkg-config mingw-w64-x86_64-tools-extra
+// pacman -S mingw-w64-x86_64-pkg-config
+

@@ -1007,6 +1007,7 @@ RLAPI const char *GetMonitorName(int monitor);                    // Get the hum
 RLAPI void SetClipboardText(const char *text);                    // Set clipboard text content
 RLAPI const char *GetClipboardText(void);                         // Get clipboard text content
 RLAPI Image GetClipboardImage(void);                              // Get clipboard image
+RLAPI void SetClipboardImage(Image image);                        // Set clipboard image
 RLAPI void EnableEventWaiting(void);                              // Enable waiting for events on EndDrawing(), no automatic event polling
 RLAPI void DisableEventWaiting(void);                             // Disable waiting for events on EndDrawing(), automatic events polling
 
@@ -1181,7 +1182,7 @@ RLAPI int GetGamepadButtonPressed(void);                                        
 RLAPI int GetGamepadAxisCount(int gamepad);                                        // Get gamepad axis count for a gamepad
 RLAPI float GetGamepadAxisMovement(int gamepad, int axis);                         // Get axis movement value for a gamepad axis
 RLAPI int SetGamepadMappings(const char *mappings);                                // Set internal gamepad mappings (SDL_GameControllerDB)
-RLAPI void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor);    // Set gamepad vibration for both motors
+RLAPI void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor, float duration); // Set gamepad vibration for both motors (duration in seconds)
 
 // Input-related functions: mouse
 RLAPI bool IsMouseButtonPressed(int button);                  // Check if a mouse button has been pressed once

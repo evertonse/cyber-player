@@ -1,7 +1,0 @@
-SDL         8468c372b21b937d7adb340c4725d77c7d87c4d9          
-SDL_image   6b2ba0c5a6876c8b829dbe6218aff3fa34ebde49   
-SDL_mixer   79d152ebf2a3e81f7e345740c24fb675670b5c73   
-SDL_ttf     a614d5be69e49962749a921291b189e2ec8d80d0     
-SDL_rtf     6ce99a0d2808b73913150ef6812d06f6a50a4eeb     
-SDL_net     491203b3bd80bc8196628aca3f262848a820557d     
-SDL2_compat 9d32b8e93ce72c2f5f8ee0ef42c75b3291b64c89 

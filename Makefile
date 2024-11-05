@@ -29,6 +29,10 @@ sync-full:
 	--include './examples/*' \
 	. $(MINGW_CODE_DIR)
 
+sync-dot-build:
+	rsync -av ./.build $(MINGW_CODE_DIR)/.build/extra/
+
+
 
 
 

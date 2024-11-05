@@ -5,7 +5,7 @@
 // https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-operations
 
 
-// #define IMPORT_ALL
+#define IMPORT_ALL
 
 #if defined (_WIN32)
 
@@ -13,52 +13,12 @@
 
 #include <sdkddkver.h>
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#define NOGDI
 #include <windows.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <assert.h>
-
-#define BI_RGB __MSABI_LONG(0)
-#define BI_RLE8 __MSABI_LONG(1)
-#define BI_RLE4 __MSABI_LONG(2)
-#define BI_BITFIELDS __MSABI_LONG(3)
-#define BI_JPEG __MSABI_LONG(4)
-#define BI_PNG __MSABI_LONG(5)
-
-#include <pshpack2.h>
-  typedef struct tagBITMAPFILEHEADER {
-    WORD bfType;
-    DWORD bfSize;
-    WORD bfReserved1;
-    WORD bfReserved2;
-    DWORD bfOffBits;
-  } BITMAPFILEHEADER,*LPBITMAPFILEHEADER,*PBITMAPFILEHEADER;
-#include <poppack.h>
-
-  typedef struct tagRGBQUAD {
-    BYTE rgbBlue;
-    BYTE rgbGreen;
-    BYTE rgbRed;
-    BYTE rgbReserved;
-  } RGBQUAD;
-
-  typedef struct tagBITMAPINFOHEADER {
-    DWORD biSize;
-    LONG biWidth;
-    LONG biHeight;
-    WORD biPlanes;
-    WORD biBitCount;
-    DWORD biCompression;
-    DWORD biSizeImage;
-    LONG biXPelsPerMeter;
-    LONG biYPelsPerMeter;
-    DWORD biClrUsed;
-    DWORD biClrImportant;
-  } BITMAPINFOHEADER,*LPBITMAPINFOHEADER,*PBITMAPINFOHEADER;
-#else 
+#else
 
 #include <stdio.h>
 #include <stdbool.h>
@@ -310,7 +270,7 @@ int main(int argc, wchar_t *argv[])
 
     // Manipulate it:
     image.flipHorizontally();
-                
+
     // Put it back in the clipboard:
     PutBitmapInClipboard_From32bppTopDownRGBAData(image.getSize().x, image.getSize().y, image.getPixelsPtr());
 
@@ -327,7 +287,7 @@ int main(int argc, wchar_t *argv[])
     // This will only work if the DIB format is supported by GDI. Not all formats are supported.
     BYTE *PixelDataNew;
     HBITMAP hBitmap = CreateDIBSection(NULL, (BITMAPINFO *)BitmapInfoHeader, DIB_RGB_COLORS, (void **)&PixelDataNew, NULL, 0);
-    
+
     assert(hBitmap);
 
     // Need to copy the data from the clipboard to the new DIBSection.
@@ -446,7 +406,7 @@ static void PutBitmapInClipboard_From32bppTopDownRGBAData(INT Width, INT Height,
     // GDI won't help us here if we want to preserve the alpha channel. It doesn't support BI_ALPHABITFIELDS, and
     // we can't use BI_RGB directly because BI_RGB actually means BGRA in reality.
     // That means, unfortunately it's not going to be a simple memcpy :(
-    
+
     DWORD PixelDataSize = 4/*32bpp*/ * Width * Height;
     // We need BI_BITFIELDS for RGB color masks here.
     size_t TotalSize = sizeof(BITMAPINFOHEADER) + PixelDataSize;
@@ -615,7 +575,7 @@ char* GetClipboardImage(int* width, int* height, size_t *data_size) {
 //     bih->biBitCount = 32;
 //     bih->biCompression = BI_RGB;
 //     bih->biSizeImage = PixelDataSize;
-//     
+//
 //     void *PixelData = (BYTE *)mem + sizeof(BITMAPINFOHEADER);
 //     GlobalUnlock(hGlobal);
 //     return PixelData;

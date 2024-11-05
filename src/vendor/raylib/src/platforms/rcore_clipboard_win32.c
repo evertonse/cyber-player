@@ -1,72 +1,20 @@
+#include "utils.h"
 #if !defined(_WIN32)
 #   error "This module is only made for Windows OS"
 #else
-// Needs both `Image` and `LoadImageFromMemory` from `rtexture` compleling >:C
+// Needs both `Image` and `LoadImageFromMemory` from `rtexture` >:C
 
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <assert.h>
 
-#define DrawText DrawText_win32
-#define Rectangle rectangle_win32
-#define CloseWindow CloseWindow_win32
-#define ShowCursor __imp_ShowCursor
-
-// To avoid conflicting windows.h symbols with raylib, some flags are defined
-// WARNING: Those flags avoid inclusion of some Win32 headers that could be required
-// by user at some point and won't be included...
-//-------------------------------------------------------------------------------------
-
-#define NOGDICAPMASKS     // CC_*, LC_*, PC_*, CP_*, TC_*, RC_
-#define NOVIRTUALKEYCODES // VK_*
-#define NOWINMESSAGES     // WM_*, EM_*, LB_*, CB_*
-#define NOWINSTYLES       // WS_*, CS_*, ES_*, LBS_*, SBS_*, CBS_*
-#define NOSYSMETRICS      // SM_*
-#define NOMENUS           // MF_*
-#define NOICONS           // IDI_*
-#define NOKEYSTATES       // MK_*
-#define NOSYSCOMMANDS     // SC_*
-#define NORASTEROPS       // Binary and Tertiary raster ops
-#define NOSHOWWINDOW      // SW_*
-#define OEMRESOURCE       // OEM Resource values
-#define NOATOM            // Atom Manager routines
-#define NOCLIPBOARD       // Clipboard routines
-#define NOCOLOR           // Screen colors
-#define NOCTLMGR          // Control and Dialog routines
-#define NODRAWTEXT        // DrawText() and DT_*
-// #define NOGDI             // All GDI defines and routines
-#define NOKERNEL          // All KERNEL defines and routines
-#define NOUSER            // All USER defines and routines
-#define NONLS             // All NLS defines and routines
-#define NOMB              // MB_* and MessageBox()
-#define NOMEMMGR          // GMEM_*, LMEM_*, GHND, LHND, associated routines
-#define NOMETAFILE        // typedef METAFILEPICT
-#define NOMINMAX          // Macros min(a,b) and max(a,b)
-#define NOMSG             // typedef MSG and associated routines
-#define NOOPENFILE        // OpenFile(), OemToAnsi, AnsiToOem, and OF_*
-#define NOSCROLL          // SB_* and scrolling routines
-#define NOSERVICE         // All Service Controller routines, SERVICE_ equates, etc.
-#define NOSOUND           // Sound driver routines
-#define NOTEXTMETRIC      // typedef TEXTMETRIC and associated routines
-#define NOWH              // SetWindowsHook and WH_*
-#define NOWINOFFSETS      // GWL_*, GCL_*, associated routines
-#define NOCOMM            // COMM driver routines
-#define NOKANJI           // Kanji support stuff.
-#define NOHELP            // Help engine interface.
-#define NOPROFILER        // Profiler interface.
-#define NODEFERWINDOWPOS  // DeferWindowPos routines
-#define NOMCX             // Modem Configuration Extensions
-
-// Type required before windows.h inclusion
-typedef struct tagMSG *LPMSG;
-
 #define WIN32_LEAN_AND_MEAN
-// #include <sdkddkver.h>
-// #include <windows.h>
-// #include <winuser.h>
 #include <minwindef.h>
+// #include <sdkddkver.h>
+// #include <winuser.h>
 // #include <minwinbase.h>
+// #include <windows.h>
 
 #ifndef WINAPI
 #if defined(_ARM_)
@@ -110,6 +58,22 @@ typedef int WINBOOL;
 #define HWND void*
 #endif
 
+#ifndef HDC
+#define HDC void*
+#endif
+
+#ifndef HGDIOBJ
+#define HGDIOBJ void*
+#endif
+
+#ifndef HBITMAP
+#define HBITMAP void*
+#endif
+
+#ifndef HGLOBAL
+#define HGLOBAL void*
+#endif
+
 
 #if !defined(_WINUSER_) || !defined(WINUSER_ALREADY_INCLUDED)
 WINUSERAPI WINBOOL WINAPI OpenClipboard(HWND hWndNewOwner);
@@ -133,18 +97,44 @@ WINUSERAPI int     WINAPI GetPriorityClipboardFormat(UINT *paFormatPriorityList,
 WINUSERAPI HWND    WINAPI GetOpenClipboardWindow(VOID);
 #endif
 
-#ifndef HGLOBAL
-#define HGLOBAL void*
-#endif
 
 #if !defined(_WINBASE_) || !defined(WINBASE_ALREADY_INCLUDED)
 WINBASEAPI SIZE_T  WINAPI GlobalSize (HGLOBAL hMem);
 WINBASEAPI LPVOID  WINAPI GlobalLock (HGLOBAL hMem);
 WINBASEAPI WINBOOL WINAPI GlobalUnlock (HGLOBAL hMem);
-#endif
+
+WINBASEAPI HGLOBAL WINAPI GlobalAlloc (UINT uFlags, SIZE_T dwBytes);
+WINBASEAPI HGLOBAL WINAPI GlobalReAlloc (HGLOBAL hMem, SIZE_T dwBytes, UINT uFlags);
+WINBASEAPI HGLOBAL WINAPI GlobalFree (HGLOBAL hMem);
+WINBASEAPI HLOCAL  WINAPI LocalReAlloc (HLOCAL hMem, SIZE_T uBytes, UINT uFlags);
+
+
+#define GMEM_FIXED 0x0
+#define GMEM_MOVEABLE 0x2
+#define GMEM_NOCOMPACT 0x10
+#define GMEM_NODISCARD 0x20
+#define GMEM_ZEROINIT 0x40
+#define GMEM_MODIFY 0x80
+#define GMEM_DISCARDABLE 0x100
+#define GMEM_NOT_BANKED 0x1000
+#define GMEM_SHARE 0x2000
+#define GMEM_DDESHARE 0x2000
+#define GMEM_NOTIFY 0x4000
+#define GMEM_LOWER GMEM_NOT_BANKED
+#define GMEM_VALID_FLAGS 0x7f72
+#define GMEM_INVALID_HANDLE 0x8000
+
+#endif // _WINBASE_
+
 
 
 #if !defined(_WINGDI_) || !defined(WINGDI_ALREADY_INCLUDED)
+#ifdef _GDI32_
+    #define WINGDIAPI
+#else
+    #define WINGDIAPI DECLSPEC_IMPORT
+#endif
+
 #ifndef BITMAPINFOHEADER_ALREADY_DEFINED
 #define BITMAPINFOHEADER_ALREADY_DEFINED
 // Does this header need to be packed ? by the windowps header it doesnt seem to be
@@ -188,6 +178,21 @@ typedef struct tagRGBQUAD {
 } RGBQUAD, *LPRGBQUAD;
 #endif
 
+#ifndef BITMAP_ALREADY_DEFINED
+#define BITMAP_ALREADY_DEFINED
+  typedef struct tagBITMAP {
+    LONG bmType;
+    LONG bmWidth;
+    LONG bmHeight;
+    LONG bmWidthBytes;
+    WORD bmPlanes;
+    WORD bmBitsPixel;
+    LPVOID bmBits;
+  } BITMAP,*PBITMAP,*NPBITMAP,*LPBITMAP;
+
+#endif
+
+
 
 // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/4e588f70-bd92-4a6f-b77f-35d0feaf7a57
 #define BI_RGB       0x0000
@@ -200,10 +205,36 @@ typedef struct tagRGBQUAD {
 #define BI_CMYKRLE8  0x000C
 #define BI_CMYKRLE4  0x000D
 
+
+
+#ifndef BITMAPINFO_ALREADY_DEFINED
+#define BITMAPINFO_ALREADY_DEFINED
+  typedef struct tagBITMAPINFO {
+    BITMAPINFOHEADER bmiHeader;
+    RGBQUAD bmiColors[1];
+  } BITMAPINFO,*LPBITMAPINFO,*PBITMAPINFO;
 #endif
 
+#define DIB_RGB_COLORS 0
+#define DIB_PAL_COLORS 1
+
+WINGDIAPI HBITMAP WINAPI CreateBitmap(int nWidth,int nHeight,UINT nPlanes,UINT nBitCount, CONST VOID *lpBits);
+WINGDIAPI HBITMAP WINAPI CreateBitmapIndirect(CONST BITMAP *pbm);
+WINGDIAPI int WINAPI GetObjectA(HANDLE h,int c,LPVOID pv);
+WINGDIAPI int WINAPI GetObjectW(HANDLE h,int c,LPVOID pv);
+WINGDIAPI HGDIOBJ WINAPI SelectObject(HDC hdc,HGDIOBJ h);
+WINGDIAPI HDC WINAPI CreateCompatibleDC(HDC hdc);
+WINGDIAPI int WINAPI GetDIBits(HDC hdc,HBITMAP hbm,UINT start,UINT cLines,LPVOID lpvBits,LPBITMAPINFO lpbmi,UINT usage);
+WINGDIAPI WINBOOL WINAPI DeleteDC(HDC hdc);
+WINGDIAPI WINBOOL WINAPI DeleteMetaFile(HMETAFILE hmf);
+WINGDIAPI WINBOOL WINAPI DeleteObject(HGDIOBJ ho);
+
+
+#endif // WINDGI
+
 // https://learn.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
-#define CF_DIB 8
+#define CF_DIB    8
+#define CF_BITMAP 2
 
 // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setsystemcursor
 // #define OCR_NORMAL      32512 // Normal     select
@@ -229,18 +260,32 @@ typedef struct tagRGBQUAD {
 static BOOL           OpenClipboardRetrying(HWND handle); // Open clipboard with a number of retries
 static int            GetPixelDataOffset(BITMAPINFOHEADER bih);
 static unsigned char* GetClipboardImageData(int* width, int* height, unsigned int *dataSize);
+static void           PutBitmapInClipboardAsDIB(HBITMAP hBitmap);
+static void           PutBitmapInClipboardFrom32bppTopDownRGBAData(INT Width, INT Height, const void *Data32bppRGBA);
 //----------------------------------------------------------------------------------
 // Module Functions Definition: Clipboard Image
 //----------------------------------------------------------------------------------
 
 Image GetClipboardImage(void)
 {
-    int width, height;
-    unsigned int dataSize;
+    int width = 0;
+    int height = 0;
+    unsigned int dataSize = 0;
     unsigned char* fileData = GetClipboardImageData(&width, &height, &dataSize);
     Image image = LoadImageFromMemory(".bmp", fileData, dataSize);
     return image;
 }
+
+void SetClipboardImage(Image image)
+{
+    if (image.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) {
+        TRACELOG(LOG_INFO, "We only support pixelformat uncompressed-R8G8B8A8 \n");
+        image = ImageCopy(image);
+        ImageFormat(&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    }
+    PutBitmapInClipboardFrom32bppTopDownRGBAData(image.width, image.height, image.data);
+}
+
 
 
 static unsigned char* GetClipboardImageData(int* width, int* height, unsigned int *dataSize)
@@ -342,6 +387,7 @@ static BOOL OpenClipboardRetrying(HWND hWnd)
     return false;
 }
 
+// Based off of researching microsoft docs and reponses from this question https://stackoverflow.com/questions/30552255/how-to-read-a-bitmap-from-the-windows-clipboard#30552856
 // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-bitmapinfoheader
 // Get the byte offset where does the pixels data start (from a packed DIB)
 static int GetPixelDataOffset(BITMAPINFOHEADER bih)
@@ -361,14 +407,12 @@ static int GetPixelDataOffset(BITMAPINFOHEADER bih)
         //
         if (bih.biBitCount > 8)
         {
-            // Should never happened RBG with more the 8bpp!
-            assert(bih.biCompression != BI_RGB);
+            // if bih.biCompression is RBG we should NOT offset more
 
             if (bih.biCompression == BI_BITFIELDS)
             {
                 offset += 3 * rgbaSize;
-            }
-            else if (bih.biCompression == 6 /* BI_ALPHABITFIELDS */)
+            } else if (bih.biCompression == 6 /* BI_ALPHABITFIELDS */)
             {
                 // Not widely supported, but valid.
                 offset += 4 * rgbaSize;
@@ -388,57 +432,130 @@ static int GetPixelDataOffset(BITMAPINFOHEADER bih)
     } else {
         if (bih.biBitCount < 16)
         {
-            offset = offset + rgbaSize << bih.biBitCount;
+            offset = offset + (rgbaSize << bih.biBitCount);
         }
     }
 
     return bih.biSize + offset;
 }
 
-#undef NOGDICAPMASKS     // CC_*, LC_*, PC_*, CP_*, TC_*, RC_
-#undef NOVIRTUALKEYCODES // VK_*
-#undef NOWINMESSAGES     // WM_*, EM_*, LB_*, CB_*
-#undef NOWINSTYLES       // WS_*, CS_*, ES_*, LBS_*, SBS_*, CBS_*
-#undef NOSYSMETRICS      // SM_*
-#undef NOMENUS           // MF_*
-#undef NOICONS           // IDI_*
-#undef NOKEYSTATES       // MK_*
-#undef NOSYSCOMMANDS     // SC_*
-#undef NORASTEROPS       // Binary and Tertiary raster ops
-#undef NOSHOWWINDOW      // SW_*
-#undef OEMRESOURCE       // OEM Resource values
-#undef NOATOM            // Atom Manager routines
-#undef NOCLIPBOARD       // Clipboard routines
-#undef NOCOLOR           // Screen colors
-#undef NOCTLMGR          // Control and Dialog routines
-#undef NODRAWTEXT        // DrawText() and DT_*
-#undef NOGDI             // All GDI defines and routines
-#undef NOKERNEL          // All KERNEL defines and routines
-#undef NOUSER            // All USER defines and routines
-#undef NONLS             // All NLS defines and routines
-#undef NOMB              // MB_* and MessageBox()
-#undef NOMEMMGR          // GMEM_*, LMEM_*, GHND, LHND, associated routines
-#undef NOMETAFILE        // typedef METAFILEPICT
-#undef NOMINMAX          // Macros min(a,b) and max(a,b)
-#undef NOMSG             // typedef MSG and associated routines
-#undef NOOPENFILE        // OpenFile(), OemToAnsi, AnsiToOem, and OF_*
-#undef NOSCROLL          // SB_* and scrolling routines
-#undef NOSERVICE         // All Service Controller routines, SERVICE_ equates, etc.
-#undef NOSOUND           // Sound driver routines
-#undef NOTEXTMETRIC      // typedef TEXTMETRIC and associated routines
-#undef NOWH              // SetWindowsHook and WH_*
-#undef NOWINOFFSETS      // GWL_*, GCL_*, associated routines
-#undef NOCOMM            // COMM driver routines
-#undef NOKANJI           // Kanji support stuff.
-#undef NOHELP            // Help engine interface.
-#undef NOPROFILER        // Profiler interface.
-#undef NODEFERWINDOWPOS  // DeferWindowPos routines
-#undef NOMCX             // Modem Configuration Extensions
+static void PutBitmapInClipboardAsDIB(HBITMAP hBitmap)
+{
+    // Need this to get the bitmap dimensions.
+    BITMAP desc = {};
+    int tmp = GetObjectW(hBitmap, sizeof(desc), &desc);
+    assert(tmp != 0);
 
-#undef DrawText
-#undef ShowCursor
-#undef CloseWindow
-#undef Rectangle
-#undef HWND
+    // We need to build this structure in a GMEM_MOVEABLE global memory block:
+    //   BITMAPINFOHEADER (40 bytes)
+    //   PixelData (4 * Width * Height bytes)
+    // We're enforcing 32bpp BI_RGB, so no bitmasks and no color table.
+    // NOTE: SetClipboardData(CF_DIB) insists on the size 40 version of BITMAPINFOHEADER, otherwise it will misinterpret the data.
+
+    DWORD PixelDataSize = 4/*32bpp*/ * desc.bmWidth * desc.bmHeight; // Correct alignment happens implicitly.
+    assert(desc.bmWidth > 0);
+    assert(desc.bmHeight > 0);
+    size_t TotalSize = sizeof(BITMAPINFOHEADER) + PixelDataSize;
+    HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, TotalSize);
+    assert(hGlobal);
+    void *mem = GlobalLock(hGlobal);
+    assert(mem);
+
+    BITMAPINFOHEADER *bih = (BITMAPINFOHEADER *)mem;
+    bih->biSize = sizeof(BITMAPINFOHEADER);
+    bih->biWidth = desc.bmWidth;
+    bih->biHeight = desc.bmHeight;
+    bih->biPlanes = 1;
+    bih->biBitCount = 32;
+    bih->biCompression = BI_RGB;
+    bih->biSizeImage = PixelDataSize;
+    HDC hdc = CreateCompatibleDC(NULL);
+    assert(hdc);
+    HGDIOBJ old = SelectObject(hdc, hBitmap);
+    assert(old != NULL); // This can fail if the hBitmap is still selected into a different DC.
+    void *PixelData = (BYTE *)mem + sizeof(BITMAPINFOHEADER);
+    // Pathologial "bug": If the bitmap is a DDB that originally belonged to a device with a different palette, that palette is lost. The caller would need to give us the correct HDC, but this is already insane enough as it is.
+    tmp = GetDIBits(hdc, hBitmap, 0, desc.bmHeight, PixelData, (BITMAPINFO *)bih, DIB_RGB_COLORS);
+    assert(tmp != 0);
+    // NOTE: This will correctly preserve the alpha channel if possible, but it's up to the receiving application to handle it.
+    DeleteDC(hdc);
+
+    GlobalUnlock(hGlobal);
+
+    EmptyClipboard();
+    SetClipboardData(CF_DIB, hGlobal);
+
+    // The hGlobal now belongs to the clipboard. Do not free it.
+}
+
+// Helper function for interaction with libraries like stb_image.
+// Data will be copied, so you can do what you want with it after this function returns.
+static void PutBitmapInClipboardFrom32bppTopDownRGBAData(INT Width, INT Height, const void *Data32bppRGBA)
+{
+    // Nomenclature: Data at offset 0 is R top left corner, offset 1 is G top left corner, etc.
+    //               This is pretty much the opposite of what a HBITMAP normally does.
+    assert(Width > 0);
+    assert(Height > 0);
+    assert(Data32bppRGBA);
+
+    // GDI won't help us here if we want to preserve the alpha channel. It doesn't support BI_ALPHABITFIELDS, and
+    // we can't use BI_RGB directly because BI_RGB actually means BGRA in reality.
+    // That means, unfortunately it's not going to be a simple memcpy :(
+
+    DWORD PixelDataSize = 4/*32bpp*/ * Width * Height;
+    // We need BI_BITFIELDS for RGB color masks here.
+    size_t TotalSize = sizeof(BITMAPINFOHEADER) + PixelDataSize;
+    HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, TotalSize);
+    assert(hGlobal);
+    void *mem = GlobalLock(hGlobal);
+    assert(mem);
+
+    BITMAPINFOHEADER *bih = (BITMAPINFOHEADER *)mem;
+    bih->biSize = sizeof(BITMAPINFOHEADER);
+    bih->biWidth = Width;
+    bih->biHeight = -Height; // Negative height means top-down bitmap
+    bih->biPlanes = 1;
+    bih->biBitCount = 32;
+    bih->biCompression = BI_RGB;
+    bih->biSizeImage = PixelDataSize;
+
+    BYTE *PixelData = (BYTE *)mem + sizeof(BITMAPINFOHEADER);
+    DWORD NumPixels = Width * Height;
+    for (DWORD i = 0; i < NumPixels; ++i)
+    {
+        // Convert RGBA to BGRA
+        DWORD tmp = ((DWORD *)Data32bppRGBA)[i];
+        DWORD tmp2 = tmp & 0xff00ff00; // assumes LE
+        tmp2 |= (tmp >> 16) & 0xff;
+        tmp2 |= (tmp & 0xff) << 16;
+        ((DWORD *)PixelData)[i] = tmp2;
+    }
+
+    GlobalUnlock(hGlobal);
+
+    EmptyClipboard();
+    SetClipboardData(CF_DIB, hGlobal);
+
+    // The hGlobal now belongs to the clipboard. Do not free it.
+}
+
+void SetClipboardAsBitmap(int width, int height, unsigned char *data) 
+{
+    HBITMAP bmpHandle = NULL;
+    bmpHandle = CreateBitmap(width, height, 1, 32, data);
+
+    if (!OpenClipboardRetrying(NULL)) {
+        TRACELOG(LOG_WARNING, "Clipboard image: couldn't open clibboard");
+        return;
+    }
+    EmptyClipboard();
+
+    SetClipboardData(CF_BITMAP, bmpHandle);
+
+    CloseClipboard();
+    DeleteObject(bmpHandle);
+}
+
 #endif
 // EOF
+

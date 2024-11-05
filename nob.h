@@ -422,6 +422,7 @@ Nob_String_View nob_sv_trim(Nob_String_View sv);
 Nob_String_View nob_sv_trim_left(Nob_String_View sv);
 Nob_String_View nob_sv_trim_right(Nob_String_View sv);
 bool nob_sv_eq(Nob_String_View a, Nob_String_View b);
+bool nob_sv_eq_cstr(Nob_String_View a, const char* b);
 Nob_String_View nob_sv_from_cstr(const char *cstr);
 Nob_String_View nob_sv_from_parts(const char *data, size_t count);
 
@@ -517,6 +518,42 @@ bool nob_mkdir_if_not_exists(const char *path)
     }
 
     nob_log(NOB_INFO, "created directory `%s`", path);
+    return true;
+}
+
+bool nob_remove_file_if_exists(const char *path)
+{
+
+    if (!nob_file_exists(path)) {
+        nob_log(NOB_INFO, "file `%s` does not exist", path);
+        return true;
+    }
+    
+    Nob_File_Type type = nob_get_file_type(path);
+    
+    if (type != NOB_FILE_REGULAR) {
+        nob_log(NOB_ERROR, "`%s` exists but is not a regular file", path);
+        return false;
+    }
+
+    if (type == NOB_FILE_DIRECTORY) {
+        nob_log(NOB_ERROR, "`%s` exists but is a directory, should we make a recursive remove function?", path);
+        return false;
+    }
+
+#ifdef _WIN32
+    int result = remove(path);
+#else
+    // https://www.man7.org/linux/man-pages/man2/unlink.2.html
+    int result = unlink(path);
+#endif
+
+    if (result < 0) {
+        nob_log(NOB_ERROR, "could not remove file `%s`: %s", path, strerror(errno));
+        return false;
+    }
+    
+    nob_log(NOB_INFO, "removed file `%s`", path);
     return true;
 }
 
@@ -1718,6 +1755,16 @@ bool nob_sv_eq(Nob_String_View a, Nob_String_View b)
     }
 }
 
+bool nob_sv_eq_cstr(Nob_String_View a, const char* b)
+{
+    size_t b_count = strlen(b);
+    if (a.count != b_count) {
+        return false;
+    } else {
+        return memcmp(a.data, b, a.count) == 0;
+    }
+}
+
 // Does source (src) starts with a section
 bool nob_sv_starts_with(Nob_String_View src, Nob_String_View section)
 {
@@ -1844,6 +1891,7 @@ int closedir(DIR *dirp)
     // end of the file after the NOB_IMPLEMENTATION.
     #ifdef NOB_STRIP_PREFIX
         #define TODO NOB_TODO
+        #define PANIC(msg) NOB_ASSERT(0 && msg)
         #define UNUSED NOB_UNUSED
         #define ARRAY_LEN NOB_ARRAY_LEN
         #define ARRAY_GET NOB_ARRAY_GET
@@ -1936,6 +1984,7 @@ int closedir(DIR *dirp)
         #define sv_trim_left nob_sv_trim_left
         #define sv_trim_right nob_sv_trim_right
         #define sv_eq nob_sv_eq
+        #define sv_eq_cstr nob_sv_eq_cstr
         #define sv_starts_with nob_sv_starts_with
         #define sv_from_cstr nob_sv_from_cstr
         #define sv_from_parts nob_sv_from_parts
