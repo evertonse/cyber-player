@@ -46,18 +46,18 @@ int main(int argc, char *argv[]) {
         if (IsKeyPressed(KEY_H)) {
             curr = (curr-1) % (24);
             img.format = formats[curr];
+            printf("curr=%d\n", curr);
         } else if (IsKeyPressed(KEY_L)) {
+            printf("img.format=%d\n", img.format);
             curr = (curr+1) % (24);
             img.format = formats[curr];
         }
 
-        printf("curr=%d\n", curr);
-        printf("img.format=%d\n", img.format);
 
         if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_C)) {
             ImageColorContrast(&img, 40);
             // SetClipboardImage(img);
-        } else if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_V)) {
+        } else if (IsKeyDown(KEY_LEFT_CONTROL) && IsKeyPressed(KEY_V) || IsKeyPressed(KEY_V)) {
             #ifdef _WIN32
             img = GetClipboardImage();
             tex = LoadTextureFromImage(img);
