@@ -106,6 +106,9 @@ static bool filter_base_name_starts_with_raylib_and_ends_with_dot_c(const char *
 #   include "dirent.h"
 #endif
 
+#undef PATH_MAX
+#define PATH_MAX 2048
+
 typedef Nob_Cmd CStr_Array;
 
 void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
