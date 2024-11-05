@@ -494,6 +494,9 @@ static int closedir(DIR *dirp);
 #endif // _WIN32
 // minirent.h HEADER END ////////////////////////////////////////
 
+#undef PATH_MAX
+#define PATH_MAX 1024 // The default is 256 on some systems headers, and might be too small nowadays
+
 #endif // NOB_H_
 
 #ifdef NOB_IMPLEMENTATION
