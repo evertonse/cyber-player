@@ -239,13 +239,14 @@ static const int CursorsLUT[] = {
 };
 
 
-// SDL3 Migration Layer, maybe to avoid ifdefs inside functions
+// SDL3 Migration Layer made to avoid `ifdefs` inside functions when we can.
 #ifdef PLATFORM_DESKTOP_SDL3
 
 // SDL3 Migration:
 //     SDL_WINDOW_FULLSCREEN_DESKTOP has been removed,
 //     and you can call SDL_GetWindowFullscreenMode()
-//     to see whether an exclusive fullscreen mode will be used or the borderless fullscreen desktop mode will be used when the window is fullscreen.
+//     to see whether an exclusive fullscreen mode will be used 
+//     or the borderless fullscreen desktop mode will be used
 #define SDL_WINDOW_FULLSCREEN_DESKTOP SDL_WINDOW_FULLSCREEN
 
 
@@ -253,24 +254,29 @@ static const int CursorsLUT[] = {
 #define SDL_DISABLE false
 #define SDL_ENABLE  true
 
-// SDL3 Migration: * SDL_INIT_TIMER - no longer needed before calling SDL_AddTimer()
-#define SDL_INIT_TIMER 0x0 // It's a flag
+// SDL3 Migration: SDL_INIT_TIMER - no longer needed before calling SDL_AddTimer()
+#define SDL_INIT_TIMER 0x0 // It's a flag, so no problem in setting it to zero if we use in a bitor (|)
 
 // SDL3 Migration: The SDL_WINDOW_SHOWN flag has been removed. Windows are shown by default and can be created hidden by using the SDL_WINDOW_HIDDEN flag.
-#define SDL_WINDOW_SHOWN 0x0 // It's a flag
+#define SDL_WINDOW_SHOWN 0x0 // It's a flag, so no problem in setting it to zero if we use in a bitor (|)
 
+//
 // SDL3 Migration: Renamed
-// IMPORTANT: https://github.com/libsdl-org/SDL/issues/3540#issuecomment-1793449852
+// IMPORTANT:
+// Might need to call SDL_CleanupEvent somewhere see :https://github.com/libsdl-org/SDL/issues/3540#issuecomment-1793449852
+//
 #define SDL_DROPFILE  SDL_EVENT_DROP_FILE
 
-const char* SDL_GameControllerNameForIndex(int joystick_index) {
-    // WARN: SDL3 uses the IDs itself (SDL_JoystickID) instead of SDL2 joystick_index
+
+const char* SDL_GameControllerNameForIndex(int joystickIndex)
+{
+    // NOTE: SDL3 uses the IDs itself (SDL_JoystickID) instead of SDL2 joystick_index
     const char* name = NULL;
-    int i, num_joysticks;
-    SDL_JoystickID *joysticks = SDL_GetJoysticks(&num_joysticks);
+    int i, numJoysticks;
+    SDL_JoystickID *joysticks = SDL_GetJoysticks(&numJoysticks);
     if (joysticks) {
-        if (joystick_index < num_joysticks) {
-            SDL_JoystickID instance_id = joysticks[joystick_index];
+        if (joystickIndex < numJoysticks) {
+            SDL_JoystickID instance_id = joysticks[joystickIndex];
             name = SDL_GetGamepadNameForID(instance_id);
         }
         SDL_free(joysticks);
@@ -278,15 +284,19 @@ const char* SDL_GameControllerNameForIndex(int joystick_index) {
     return name;
 }
 
-int SDL_GetNumVideoDisplays(void) {
+int SDL_GetNumVideoDisplays(void)
+{
     int monitorCount = 0;
-    SDL_GetDisplays(&monitorCount);
-    return monitorCount;
+    SDL_DisplayID *displays = SDL_GetDisplays(&monitorCount);
+    // Safe because If `mem` is NULL, SDL_free does nothing.
+    SDL_free(displays);
 
+    return monitorCount;
 }
 
 Uint8 SDL_EventState(Uint32 type, int state) {
-    switch (state) {
+    switch (state)
+    {
         case SDL_DISABLE:
             SDL_SetEventEnabled(type, false);
             break;
@@ -299,26 +309,26 @@ Uint8 SDL_EventState(Uint32 type, int state) {
     }
 }
 
-// New SDL3 signature:
-// extern SDL_DECLSPEC const SDL_DisplayMode * SDLCALL SDL_GetCurrentDisplayMode(SDL_DisplayID displayID);
-// Now we adpat
-void SDL3_GetCurrentDisplayMode(SDL_DisplayID displayID, SDL_DisplayMode* mode) {
-    const SDL_DisplayMode* curr_mode = SDL_GetCurrentDisplayMode(displayID);
-    if (curr_mode == NULL) {
+void SDL_GetCurrentDisplayMode_Adapter(SDL_DisplayID displayID, SDL_DisplayMode* mode)
+{
+    const SDL_DisplayMode* currMode = SDL_GetCurrentDisplayMode(displayID);
+    if (currMode == NULL)
+    {
         TRACELOG(LOG_WARNING, "No current display mode");
-    } else {
-        *mode = *curr_mode;
+    }
+    else
+    {
+        *mode = *currMode;
     }
 }
 
-
 // SDL3 Migration: Renamed
-#define SDL_GetCurrentDisplayMode SDL3_GetCurrentDisplayMode
+#define SDL_GetCurrentDisplayMode SDL_GetCurrentDisplayMode_Adapter
+
 
 SDL_Surface *SDL_CreateRGBSurface(Uint32 flags, int width, int height, int depth, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
 {
-    return SDL_CreateSurface(width, height,
-            SDL_GetPixelFormatForMasks(depth, Rmask, Gmask, Bmask, Amask));
+    return SDL_CreateSurface(width, height, SDL_GetPixelFormatForMasks(depth, Rmask, Gmask, Bmask, Amask));
 }
 
 // SDL3 Migration:
@@ -336,9 +346,7 @@ SDL_Surface *SDL_CreateRGBSurfaceWithFormat(Uint32 flags, int width, int height,
 
 SDL_Surface *SDL_CreateRGBSurfaceFrom(void *pixels, int width, int height, int depth, int pitch, Uint32 Rmask, Uint32 Gmask, Uint32 Bmask, Uint32 Amask)
 {
-    return SDL_CreateSurfaceFrom(width, height,
-                                 SDL_GetPixelFormatForMasks(depth, Rmask, Gmask, Bmask, Amask),
-                                 pixels, pitch);
+    return SDL_CreateSurfaceFrom(width, height, SDL_GetPixelFormatForMasks(depth, Rmask, Gmask, Bmask, Amask), pixels, pitch);
 }
 
 SDL_Surface *SDL_CreateRGBSurfaceWithFormatFrom(void *pixels, int width, int height, int depth, int pitch, Uint32 format)
@@ -346,51 +354,53 @@ SDL_Surface *SDL_CreateRGBSurfaceWithFormatFrom(void *pixels, int width, int hei
     return SDL_CreateSurfaceFrom(width, height, format, pixels, pitch);
 }
 
-int SDL_NumJoysticks(void) {
-    int i, num_joysticks;
-    SDL_JoystickID *joysticks = SDL_GetJoysticks(&num_joysticks);
+int SDL_NumJoysticks(void)
+{
+    int i, numJoysticks;
+    SDL_JoystickID *joysticks = SDL_GetJoysticks(&numJoysticks);
     SDL_free(joysticks);
-    return num_joysticks;
+    return numJoysticks;
 }
 
 
-/* SDL_SetRelativeMouseMode
- . \returns 0 on success or a negative error code on failure; 
- .    call
- .          SDL_GetError() for more information.
- .
- .          If relative mode is not supported, this returns -1.
- */
-int SDL_SetRelativeMouseMode_Adapter(SDL_bool enabled) {
+// SDL_SetRelativeMouseMode
+// returns 0 on success or a negative error code on failure
+// If relative mode is not supported, this returns -1.
+int SDL_SetRelativeMouseMode_Adapter(SDL_bool enabled)
+{
 
     //
     // SDL_SetWindowRelativeMouseMode(SDL_Window *window, bool enabled)
     // \returns true on success or false on failure; call SDL_GetError() for more
     //
-    if (SDL_SetWindowRelativeMouseMode(platform.window, enabled)) {
+    if (SDL_SetWindowRelativeMouseMode(platform.window, enabled))
+    {
         return 0; // success
-    } else {
+    }
+    else
+    {
         return -1; // failure
     }
 }
 
 #define SDL_SetRelativeMouseMode SDL_SetRelativeMouseMode_Adapter
 
-// * \returns true on success or false on failure
-bool SDL_GetRelativeMouseMode_Adapter(void) { return SDL_GetWindowRelativeMouseMode(platform.window); }
+bool SDL_GetRelativeMouseMode_Adapter(void)
+{
+    return SDL_GetWindowRelativeMouseMode(platform.window);
+}
 
 #define SDL_GetRelativeMouseMode SDL_GetRelativeMouseMode_Adapter
 
 
-int SDL_GetNumTouchFingers(SDL_TouchID touchID) {
+int SDL_GetNumTouchFingers(SDL_TouchID touchID)
+{
     // SDL_Finger **SDL_GetTouchFingers(SDL_TouchID touchID, int *count)
     int count = 0;
     SDL_Finger **fingers = SDL_GetTouchFingers(touchID, &count);
     SDL_free(fingers);
     return count;
 }
-
-
 
 #else // We're on SDL2
 
@@ -401,7 +411,6 @@ void* SDL_GetClipboardData(const char *mime_type, size_t *size) {
     // We could possibly implement it ourselves in this case for some easier platforms
     return NULL;
 }
-
 
 #endif // PLATFORM_DESKTOP_SDL3
 
@@ -1103,6 +1112,8 @@ Image GetClipboardImage(void)
     Image image = {0};
 
     size_t dataSize = 0;
+    // NOTE: This pointer should be free with SDL_free() at some point.
+    // TODO: In case of failure let's try to cycle in to other mime types (formats)
     void* fileData = SDL_GetClipboardData("image/bmp", &dataSize); // returns NULL on failure;
     if (fileData == NULL)
     {
