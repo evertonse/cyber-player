@@ -1117,7 +1117,7 @@ Image GetClipboardImage(void)
     void* fileData = SDL_GetClipboardData("image/bmp", &dataSize); // returns NULL on failure;
     if (fileData == NULL)
     {
-        TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data %s", SDL_GetError());
+        TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data. %s", SDL_GetError());
     }
     else
     {
