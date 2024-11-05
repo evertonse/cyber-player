@@ -58,6 +58,7 @@
 #if defined(_WIN32)
     typedef void *PVOID;
     typedef PVOID HANDLE;
+    #include "../external/win32_clipboard.h"
 #if !defined(IMPORTED_WIN32_MODULES)
     typedef HANDLE HWND;
 #endif
@@ -967,6 +968,35 @@ const char *GetClipboardText(void)
     return glfwGetClipboardString(platform.handle);
 }
 
+#if defined(SUPPORT_CLIPBOARD_IMAGE)
+// Get clipboard image
+Image GetClipboardImage(void)
+{
+    Image image = {0};
+
+    unsigned long long int dataSize = 0;
+
+    void* fileData = NULL;
+
+#ifdef _WIN32
+    int width, height;
+    fileData  = (void*)Win32GetClipboardImageData(&width, &height, &dataSize);
+#else
+    TRACELOG(LOG_WARNING, "Clipboard image: PLATFORM_GLFW doesn't implement `GetClipboardImage` for this OS");
+#endif
+    if (fileData == NULL)
+    {
+        TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data.");
+    }
+    else
+    {
+        image = LoadImageFromMemory(".bmp", fileData, dataSize);
+    }
+    return image;
+}
+#endif
+
+
 // Show mouse cursor
 void ShowCursor(void)
 {
@@ -1062,7 +1092,7 @@ int SetGamepadMappings(const char *mappings)
 }
 
 // Set gamepad vibration
-void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor)
+void SetGamepadVibration(int gamepad, float leftMotor, float rightMotor, float duration)
 {
     TRACELOG(LOG_WARNING, "GamepadSetVibration() not available on target platform");
 }
@@ -1076,6 +1106,7 @@ void SetMousePosition(int x, int y)
     // NOTE: emscripten not implemented
     glfwSetCursorPos(platform.handle, CORE.Input.Mouse.currentPosition.x, CORE.Input.Mouse.currentPosition.y);
 }
+
 
 // Set mouse cursor
 void SetMouseCursor(int cursor)
@@ -1899,5 +1930,10 @@ static void JoystickCallback(int jid, int event)
         memset(CORE.Input.Gamepad.name[jid], 0, 64);
     }
 }
+
+#ifdef _WIN32
+#define WIN32_CLIPBOARD_IMPLEMENTATION
+#include "../external/win32_clipboard.h"
+#endif
 
 // EOF

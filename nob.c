@@ -23,11 +23,26 @@ static struct {
     bool run;
     bool examples;
     bool cyber_player;
+    bool force; // ignores caching
+
+    struct {
+        union {
+            struct {
+                bool glfw, rgfw, sdl2, sdl3;
+            };
+            bool all[4];
+        };
+    } platforms;
+
     struct {
         bool mpv;
         bool glib;
         bool raylib;
     } libs;
+    struct {
+        const char** items;
+        size_t capacity, count;
+    } ccompilers;
 } flags = {0};
 
 typedef enum {
@@ -40,9 +55,9 @@ typedef enum {
 
 static struct {
     const char *CC, *AR, *OBJCOPY; // Must be gnu flag compliant for all of these binaries
-    const char *libraylib_path; // libraylib.a
+    const char *libraylib_path;    // libraylib.a
     Platform platform;
-} config = 
+} config =
 #if defined(__MINGW32__) || defined(__MINGW64__)
 {
     // Default
@@ -63,12 +78,16 @@ static struct {
 };
 #endif
 
+#undef needs_rebuild
+#define needs_rebuild(out, ins, count) (nob_needs_rebuild(out, ins, count) || flags.force)
+
+const char* gen_build_dir();
 
 
-#define SDL3_VERSION "SDL3-3.1.6-x86_64-w64-mingw64-patched" // Fix SDL_GetClipboardData()
-    // #define SDL3_VERSION "SDL3-3.1.3-x86_64-w64-mingw32"
-    // #define SDL3_VERSION "SDL3-x86_64-w64-mingw32"
-// #define PLATFORM_RGFW
+#define SDL3_VERSION "SDL3-3.1.6-x86_64-w64-mingw64-patched" // Patched to fix SDL_GetClipboardData() on Windows
+// #define SDL3_VERSION "SDL3-3.1.3-x86_64-w64-mingw32"
+// #define SDL3_VERSION "SDL3-x86_64-w64-mingw32"
+
 
 #define RAYLIB_SOURCE_DIR "./src/vendor/raylib/src"
 
@@ -218,7 +237,7 @@ bool sdl_redefine_symbol_in_lib(const char *static_lib_path) {
     if (!flags.mingw32) {
         assert(0 && "untested otherwise");
     }
-    
+
     Cmd cmd = {0};
     cmd_append(&cmd, config.OBJCOPY);
     {
@@ -275,7 +294,7 @@ void cmd_append_sdl(Cmd *cmd) {
                 const char *base_dir =  "src/vendor/SDL3/"SDL3_VERSION;
 
                 // const char *base_dir =  "src/vendor/SDL3/SDL3-3.1.6-x86_64-w64-mingw32";
-                cmd_append(cmd, 
+                cmd_append(cmd,
                        tprintf("-I./%s/include/SDL3/", base_dir), // Make #include "SDL.h" possible
                        tprintf("-I./%s/include/",      base_dir), // Allow #include  "SLD3/SDL_something.h"
                        tprintf("-L./%s/lib/",          base_dir), // Where the static libs lie
@@ -308,21 +327,7 @@ void cmd_append_sdl(Cmd *cmd) {
     }
 }
 
-bool build_raylib() {
-    bool result = true;
-    Cmd cmd = {0};
-    File_Paths object_files = {0};
-    File_Paths header_files = {0};
-    File_Paths c_files = {0};
-
-    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &header_files, true, nob_filter_by_extension, ".h");
-    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &c_files, true, nob_filter_by_extension, ".c");
-    read_entire_dir_filtered(RAYLIB_SOURCE_DIR"/platforms", &c_files, true, nob_filter_by_extension, ".c");
-
-    // if (!mkdir_if_not_exists(RAYLIB_BUILD_DIR)) {
-    //     return_defer(false);
-    // }
-
+const char* gen_build_dir() {
     const char *build_path = "";
     {
         const char *raylib_platform_name = "";
@@ -338,14 +343,32 @@ bool build_raylib() {
         switch (config.platform) {
             case PLATFORM_SDL3: raylib_platform_name = "SDL3"; break;
             case PLATFORM_SDL2: raylib_platform_name = "SDL2"; break;
+            case PLATFORM_GLFW: raylib_platform_name = "glfw"; break;
+            case PLATFORM_RGFW: raylib_platform_name = "RGFW"; break;
             default: PANIC("Unhandled Raylib Platform");
         }
 
         build_path = tprintf("%s/%s/%s", BUILD_DIR, tools_platform_name,  raylib_platform_name);
 
-        config.libraylib_path = strdup(tprintf("%s/libraylib.a", build_path));
     }
+    nob_mkdir_if_not_exists_recursive(build_path);
+    return build_path;
+}
 
+bool build_raylib() {
+    bool result = true;
+    Cmd cmd = {0};
+    // Let it @leak
+    File_Paths object_files = {0};
+    File_Paths header_files = {0};
+    File_Paths c_files = {0};
+
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &header_files, true, nob_filter_by_extension, ".h");
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR, &c_files, true, nob_filter_by_extension, ".c");
+    read_entire_dir_filtered(RAYLIB_SOURCE_DIR"/platforms", &c_files, true, nob_filter_by_extension, ".c");
+
+    const char *build_path = gen_build_dir();
+    config.libraylib_path = strdup(tprintf("%s/libraylib.a", build_path));
 
 
     if (!nob_mkdir_if_not_exists_recursive(build_path)) {
@@ -416,18 +439,36 @@ bool build_raylib() {
                 break;
             }
             case PLATFORM_RGFW: {
-                TODO("NOOO");
                 cmd_append(&cmd,
                     "-DPLATFORM_DESKTOP_RGFW",
-                    "-lgdi32", "-lopengl32"
+                    "-lgdi32", "-lopengl32", "-static"
                 );
                 break;
             } case PLATFORM_GLFW: {
-                TODO("NOOO");
-                cmd_append(&cmd, tprintf("-I%s", RAYLIB_SOURCE_DIR"/external/glfw/include"));
+                cmd_append(&cmd, "-I", RAYLIB_SOURCE_DIR"/external/glfw/include", "-static");
+
+                //
+                // Platform options:
+                // _GLFW_WIN32      to use the Win32 API
+                // _GLFW_X11        to use the X Window System
+                // _GLFW_WAYLAND    to use the Wayland API (experimental and incomplete)
+                // _GLFW_COCOA      to use the Cocoa frameworks
+                //
+                // On Linux, _GLFW_X11 and _GLFW_WAYLAND can be combined
+                //
+
                 cmd_append(&cmd,
                     "-DPLATFORM_DESKTOP",
+                    // GLFW build flags: http://www.glfw.org/docs/latest/compile.html#compile_manual
+                    // "-D_GLFW_BUILD_DLL", // To build shared version
                 );
+
+                if (flags.mingw32) {
+                    cmd_append(&cmd, "-D_GLFW_WIN32");
+                } else {
+                    cmd_append(&cmd, "-D_GLFW_X11");
+                }
+
                 break;
             }
                 default: PANIC("Unhandled Raylib Platform");
@@ -506,6 +547,7 @@ bool build_raylib() {
 defer:
     cmd_free(cmd);
     da_free(object_files);
+    nob_temp_reset();
     return result;
 }
 
@@ -668,7 +710,10 @@ bool build_examples(void) {
     );
 
     Procs procs = {0};
-    // da_append(&c_files, "./examples/rectangle_rounded_gradient.c");
+
+    const char *bin_dir = tprintf("%s/bin/", gen_build_dir());
+    nob_mkdir_if_not_exists_recursive(bin_dir);
+
     for (int idx = 0; idx < c_files.count; idx += 1) {
         cmd.count = 0;
         cmd_append(&cmd, config.CC);
@@ -682,8 +727,9 @@ bool build_examples(void) {
             *ext = '\0'; // Terminate the string at the '.' charact
         }
         String_View example_bin = sv_from_cstr(cstr_example_bin);
-        const char *dst = tprintf("%s/"SV_Fmt, BUILD_DIR, SV_Arg(example_bin));
+        const char *dst = tprintf("%s/"SV_Fmt, bin_dir, SV_Arg(example_bin));
         const char *sources[] = {example, NULL};
+
         if (needs_rebuild(dst, sources, ARRAY_LEN(sources) - 1 /* dont count null terminator*/)) {
             const char* source = NULL;
             for (int i = 0; (source = sources[i]); ++i) {
@@ -700,6 +746,10 @@ bool build_examples(void) {
             // PLATFORM should probably be enum flags
             if (PLATFORM_SDL2 == config.platform || PLATFORM_SDL3 == config.platform) {
                 cmd_append_sdl(&cmd);
+            } else if (PLATFORM_GLFW == config.platform && flags.mingw32) {
+                cmd_append(&cmd, "-lgdi32", "-lwinmm");
+            } else if (PLATFORM_RGFW == config.platform && flags.mingw32) {
+                cmd_append(&cmd, "-lopengl32", "-lgdi32", "-lwinmm");
             }
 
             Proc proc = cmd_run_async(cmd);
@@ -752,7 +802,7 @@ int build() {
         cmd_append(&cmd, playfile);
         if (!cmd_run_sync(cmd)) return -1;
     }
-
+    return 0;
 }
 
 // TODO: clean option
@@ -771,26 +821,86 @@ int main(int argc, char **argv) {
         arg = shift_args(&argc, &argv);
         String_View arg_sv = sv_from_cstr(arg);
 
+        // :FLAGS & CONFIG:
+        // NOTE:
+        //
+        // We have a default config.platform for `mingw` flag, along with it's tools (config.CC, config.AR, config.OBJCOPY)
+        // We might have another flag that redefines some of those configs that we wanna override.
+        // To override the default as intended, we need to either provide the flags in correct order
+        // (which is bad for end user), or we only collect flags and then configure, which is better but sad because
+        // sometimes the
+        //
+        // The rule is:
+        //    - We Must first collect the flags and then config based on flags
+        //    - When configure using the flags: if a flag triggers a default `config.option`, then it must come *before* any other flag that might change that `config.option`
         if (sv_eq_cstr(arg_sv, "mingw")) {
-            config.CC       = "x86_64-w64-mingw32-gcc";
-            config.AR       = "x86_64-w64-mingw32-ar";
-            config.OBJCOPY  = "x86_64-w64-mingw32-objcopy";
-            config.platform = PLATFORM_SDL3;
             flags.mingw32   = true;
+        } else if (sv_eq_cstr(arg_sv, "force")) {
+            flags.force = true;
+        } else if (sv_eq_cstr(arg_sv, "glfw")) {
+            flags.platforms.glfw = true;
+        } else if (sv_eq_cstr(arg_sv, "rgfw")) {
+            flags.platforms.rgfw = true;
+        } else if (sv_eq_cstr(arg_sv, "sdl2")) {
+            flags.platforms.sdl2 = true;
+            config.platform = PLATFORM_SDL2;
+        } else if (sv_eq_cstr(arg_sv, "sdl3") || sv_eq_cstr(arg_sv, "sdl")) {
+            flags.platforms.sdl3 = true;
         } if (sv_eq_cstr(arg_sv, "run")) {
             flags.run = true;
-        } else if (sv_eq_cstr(arg_sv, "clip")) {
-            TODO("NO CLIP");
         } else if (sv_eq_cstr(arg_sv, "examples")) {
             flags.examples = true;
         } else if (sv_eq_cstr(arg_sv, "CC")) {
+            // It's not harmless to set config.CC here. see :FLAGS & CONFIG:
             if (argc == 0) {
                 nob_log(ERROR, "Expected compiler name after (e.g. CC clang)");
                 exit(1);
             } else {
-                config.CC = shift_args(&argc, &argv);
-                flags.examples = true;
+                da_append(&flags.ccompilers, shift_args(&argc, &argv));
             }
+        }
+    }
+
+    if (flags.mingw32) {
+        config.CC       = "x86_64-w64-mingw32-gcc";
+        config.AR       = "x86_64-w64-mingw32-ar";
+        config.OBJCOPY  = "x86_64-w64-mingw32-objcopy";
+        config.platform = PLATFORM_SDL3;
+    }
+
+    int platform_count = 0;
+    for (int idx = 0; idx < ARRAY_LEN(flags.platforms.all); idx += 1) {
+        if (flags.platforms.all[idx] != false) {
+            platform_count += 1;
+        }
+    }
+    if (platform_count > 1) {
+        nob_log(ERROR, "Specified too many platforms (%d)", platform_count);
+        exit(1);
+    }
+
+    if (flags.platforms.glfw) {
+        config.platform = PLATFORM_GLFW;
+    } else if (flags.platforms.rgfw) {
+        config.platform = PLATFORM_RGFW;
+    } else if (flags.platforms.sdl2) {
+        config.platform = PLATFORM_SDL2;
+    } else if (flags.platforms.sdl3) {
+        // TODO: Somehow check for availability of certain libraries
+        config.platform = PLATFORM_SDL3;
+    } else if (flags.run) {
+        TODO("NRY Violation: You should beware of the NRY principle when "
+            "defining this flag (for more information search for No Run Yet on " "wikipedia!)");
+    } else if (flags.ccompilers.count > 0) {
+        if (flags.ccompilers.count == 1) {
+            config.CC = flags.ccompilers.items[0];
+            nob_log(INFO, "C compiler changed to `%s`", config.CC);
+        } else {
+            String_Builder sb = {0};
+            da_for(&flags.ccompilers) { sb_printf(&sb, (it_index < flags.ccompilers.count-1) ? "%s, ": "%s", it); }
+            nob_sb_append_null(&sb);
+            nob_log(ERROR, "Specified more than one C compiler (%s), tell me which one do you want", sb.items);
+            exit(1);
         }
     }
 
