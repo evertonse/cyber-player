@@ -293,8 +293,10 @@ void cmd_append_sdl(Cmd *cmd) {
             break;
         }
         case PLATFORM_SDL2: {
-            nob_log(INFO, "SDL2 must be system provided, both lib and headers");
-            cmd_append(cmd, "-I./src/vendor/SDL2/include/SDL2/", "-lSDL2", "-lSDL2Main");
+            nob_log(INFO, "Assuming SDL2 is system provided, both lib and headers");
+            cmd_append(cmd, "-I./src/vendor/SDL2/include/SDL2/", "-lSDL2", 
+                       // "-lSDL2Main"
+                       );
             break;
         }
         default: {
