@@ -12,6 +12,7 @@ nob.exe
 *.old
 .last_yank.txt
 .trails
+PR*.md
 .bin/
 .bin
 *.bin
@@ -22,3 +23,6 @@ nob.exe
 a.out
 *.log
 examples/raylib/
+split.sh
+src/vendor/mpv-dev-x86_64-20260614-git-7d245fd100/libmpv-2.dll
+src/vendor/mpv-dev-x86_64-20260614-git-7d245fd100/libmpv-2.dll.bak

@@ -9,6 +9,8 @@
 // #include "GLFW/glfw3.h"         // GLFW3 library: Windows, OpenGL context and
 // Input management
 
+#define IsShaderReady IsShaderValid
+
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -29,6 +31,8 @@
 #if defined(_WIN32) && defined(__MINGW64__)
 // #   include "dirent.h" // Conflicts with defined in nob.h only in mingw
 #   define realpath(N, R) _fullpath((R), (N), PATH_MAX)
+__declspec(dllimport) int   __stdcall SetConsoleOutputCP(unsigned int wCodePageID);
+__declspec(dllimport) int   __stdcall SetConsoleCP(unsigned int wCodePageID);
 #else
 #   include "dirent.h"
 #   include <linux/limits.h>
@@ -92,11 +96,18 @@ float get_value(float x, float lox, float hix) {
 #define pthread_rwlock_unlock(lock)
 #define pthread_rwlock_wrlock(lock)
 
+
+#define SOFTWARE_RENDERER
+
+#if !defined(SOFTWARE_RENDERER)
 void *glfwGetProcAddress(const char *procname);
 static void *get_proc_address_mpv(void *ctx, const char *name) {
     rlLoadExtensions(glfwGetProcAddress);
     return glfwGetProcAddress(name);
+    return SDL_GL_GetProcAddress(name);
 }
+#endif
+
 
 #define MAX_SEGMENTS 1000
 
@@ -119,6 +130,7 @@ static struct {
     .last_position    = -1,
     .segment_start    = -1,
 };
+
 
 void add_watched_segment(double start, double end) {
     if (!(start >= 0 && end >= 0)) {
@@ -151,6 +163,7 @@ int compare_segments(const void *a, const void *b) {
         return 0;
     }
 }
+
 
 Segment *merge_segments_with_args(Segment *segments, size_t num_segments) {
     // Sort the segments by start time
@@ -186,7 +199,7 @@ static pthread_mutex_t *render_update_mutex = &(pthread_mutex_t){},
 static double *percent_positions = NULL;
 static const char *currently_playing_path = NULL;
 static double percent_position;
-static double volume;
+static double volume = 0;
 static bool draw_file_list = false;
 static bool seeking = false;
 
@@ -265,6 +278,7 @@ void player_load_file(void *ctx, const char *file_path) {
 
     const char *cmd[] = {"loadfile", file_path, NULL};
     currently_playing_path = file_path;
+    printf("Trying to play %s\n", file_path);
     volume = 50;
     mpv_command_async(ctx, 0, cmd);
 
@@ -280,7 +294,8 @@ void player_load_file(void *ctx, const char *file_path) {
             printf("\nvalue:%d | key:%s | found_idx:%d\n",
                file_progress_hash_map[i].value,
                file_progress_hash_map[i].key,
-               index);
+               index
+            );
         }
     }
 
@@ -328,6 +343,7 @@ int wait_for_property(mpv_handle *ctx, const char *name) {
     }
 }
 
+
 double mpv_get_property_double(mpv_handle *ctx, const char *name) {
     double value;
     int err = mpv_get_property(ctx, name, MPV_FORMAT_DOUBLE, &value);
@@ -361,7 +377,7 @@ static void on_property_change(mpv_event_property *prop) {
 
     if (prop == NULL) return;
 
-    TRACE(LOG_INFO, "on_property_change event->name=%s", prop->name);
+    TRACE(LOG_DEBUG, "on_property_change event->name=%s", prop->name);
     static int last_time = 0;
     if (strcmp(prop->name, "percent-pos") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
@@ -369,7 +385,7 @@ static void on_property_change(mpv_event_property *prop) {
             arrput(percent_positions, percent_position);
 
             double time_position = *(double *)prop->data;
-            TRACE(LOG_INFO, "percent-pos:%.2f%%\n", percent_position);
+            TRACE(LOG_DEBUG, "percent-pos:%.2f%%\n", percent_position);
         }
     }
 
@@ -377,13 +393,13 @@ static void on_property_change(mpv_event_property *prop) {
         assert(prop->format == MPV_FORMAT_FLAG);
 
         sc.paused = *(bool *)prop->data;
-        TRACE(LOG_INFO, "Current %s: %s\n", prop->name, sc.paused ? "true" : "false");
+        TRACE(LOG_DEBUG, "Current %s: %s\n", prop->name, sc.paused ? "true" : "false");
     }
 
     if (strcmp(prop->name, "volume") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             volume = *(double *)prop->data;
-            TRACE(LOG_INFO, "Current %s: %.2f\n", prop->name, volume);
+            TRACE(LOG_DEBUG, "Current %s: %.2f\n", prop->name, volume);
         }
     }
 
@@ -397,7 +413,7 @@ static void on_property_change(mpv_event_property *prop) {
             double playback_time = *(double *)prop->data;
             double time_position = playback_time;
             TRACE(
-                LOG_ERROR,
+                LOG_DEBUG,
                 "Current %s:%.2f sc.segment_start:%.2f sc.last_position:%.2f\n",
                 prop->name, playback_time,
                 sc.segment_start, sc.last_position
@@ -522,9 +538,9 @@ static void handle_mpv_events(mpv_handle *mpv) {
          */
 
         if (mp_event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            TRACE(LOG_INFO, "uint64_t reply_userdata = %ld;\n",
+            TRACE(LOG_DEBUG, "uint64_t reply_userdata = %ld;\n",
                   mp_event->reply_userdata);
-            TRACE(LOG_INFO, "uint64_t error = %d;\n", mp_event->error);
+            TRACE(LOG_DEBUG, "uint64_t error = %d;\n", mp_event->error);
 
             mpv_event_property *prop = mp_event->data;
             on_property_change(prop);
@@ -550,6 +566,44 @@ bool IsKeyPressedOrRepeat(int key) {
     return IsKeyPressed(key) || IsKeyPressedRepeat(key);
 }
 
+bool drop_directory(FilePathList *paths, const char **prompt) {
+
+
+    const bool recursive = true;
+    bool result = false;
+    if (IsFileDropped()) {
+        FilePathList droppedFiles = LoadDroppedFiles();
+        if (droppedFiles.count > 0) {
+            const char *droppedPath = droppedFiles.paths[0];
+            printf("Dropped path `%s`\n", droppedPath);
+
+            if (false) {
+                File_Paths files = {0};
+                read_entire_dir_filtered(droppedPath, &files, true, nob_filter_by_extension, ".mp4");
+
+                for (size_t i = 0; i < files.count; i++) {
+                    printf("read_entire_dir_filtered: %s\n", files.items[i]);
+                }
+            }
+
+
+            if (DirectoryExists(droppedPath)) {
+                *paths = LoadDirectoryFilesEx(droppedPath, ".mp4", recursive);
+                if (paths->count > 0) {
+                    result = true;
+                } else {
+                    *prompt = "No mp4 files found in dropped directory";
+                }
+            } else {
+                *prompt = "Dropped item is not a directory";
+            }
+        }
+        UnloadDroppedFiles(droppedFiles);
+    }
+
+    return result;
+}
+
 static RenderTexture2D mpv_texture;
 static RenderTexture2D gui_texture;
 FilePathList mp4files;
@@ -559,7 +613,14 @@ int main(int argc, char *argv[]) {
     pthread_mutex_init(render_update_mutex, NULL);
     pthread_rwlock_init(sc.rwlock, NULL);
     SetConfigFlags(FLAG_MSAA_4X_HINT);
+
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+
     shdefault(file_progress_hash_map, HASH_DOES_NOT_EXIST);
+
 
     int len = load_progress_data(FILE_PROGRESS, &file_progress_darray);
     TRACE(LOG_INFO, "len = %d\n", len);
@@ -574,37 +635,35 @@ int main(int argc, char *argv[]) {
         shput(file_progress_hash_map, strdup(file_progress_darray[i].filename), i);
     }
 
-    if (argc != 2) die("pass a single media file as argument");
+    if (argc != 2) {
+        die("pass a single media file as argument");
+    }
+
     mpv_handle *mpv = mpv_create();
 
-    if (!mpv) die("context init failed");
+    if (!mpv) {
+        die("context init failed");
+    }
 
     mpv_set_option_string(mpv, "force-window", "yes");
     int keep_open = 1;
-    mpv_set_option(mpv, "keep-open", MPV_FORMAT_FLAG, &keep_open);
-    mpv_set_option_string(mpv, "osc", "no");  // Disable on-screen controller
-    mpv_set_option_string(mpv, "osd-level", "0");  // Disable on-screen display
+    mpv_set_option(mpv,        "keep-open", MPV_FORMAT_FLAG, &keep_open);
+    mpv_set_option_string(mpv, "osc",       "no");      // Disable on-screen controller
+    mpv_set_option_string(mpv, "osd-level", "0"); // Disable on-screen display
 
-    mpv_set_option_string(mpv, "input-default-bindings",
-                          "no");  // Disable default key bindings
-    mpv_set_option_string(mpv, "input-vo-keyboard",
-                          "no");  // Disable keyboard input on video output
-    mpv_set_option_string(mpv, "audio-display",
-                          "no");  // Disable audio visualization
+    mpv_set_option_string(mpv, "input-default-bindings", "no"); // Disable default key bindings
+    mpv_set_option_string(mpv, "input-vo-keyboard",      "no"); // Disable keyboard input on video output
+    mpv_set_option_string(mpv, "audio-display",          "no"); // Disable audio visualization
 
     mpv_check_error(mpv_set_option_string(mpv, "vo", "libmpv"));
 
     // mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid);
-    mpv_set_option_string(mpv, "input-cursor", "no");  // no mouse handling
-    mpv_set_option_string(mpv, "cursor-autohide",
-                          "no");  // no cursor-autohide, we handle that
+    mpv_set_option_string(mpv, "input-cursor",    "no");  // no mouse handling
+    mpv_set_option_string(mpv, "cursor-autohide", "no");  // no cursor-autohide, we handle that
 
-    mpv_set_option_string(mpv, "ytdl", "yes");  // youtube-dl support
-    mpv_set_option_string(mpv, "sub-auto",
-                          "fuzzy");  // Automatic subfile detection
-    mpv_set_option_string(
-        mpv, "audio-client-name",
-        "our-mplayer");  // show correct icon in e.g. pavucontrol
+    mpv_set_option_string(mpv, "ytdl",              "yes");         // youtube-dl support
+    mpv_set_option_string(mpv, "sub-auto",          "fuzzy");       // Automatic subfile detection
+    mpv_set_option_string(mpv, "audio-client-name", "our-mplayer"); // show correct icon in e.g. pavucontrol
 
     // Some minor options can only be set before mpv_initialize().
     if (mpv_initialize(mpv) < 0) die("mpv init failed");
@@ -616,57 +675,24 @@ int main(int argc, char *argv[]) {
 
     mpv_request_log_messages(mpv, "debug");
 
-    mpv_check_error(mpv_observe_property(mpv, 69, "volume", MPV_FORMAT_DOUBLE));
-    mpv_check_error(mpv_observe_property(mpv, 69, "sid", MPV_FORMAT_INT64));
-    mpv_check_error(mpv_observe_property(mpv, 69, "aid", MPV_FORMAT_INT64));
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "sub-visibility", MPV_FORMAT_FLAG));
-    mpv_check_error(mpv_observe_property(mpv, 69, "mute", MPV_FORMAT_FLAG));
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "core-idle", MPV_FORMAT_FLAG));
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "idle-active", MPV_FORMAT_FLAG));
-    mpv_check_error(mpv_observe_property(mpv, 69, "pause", MPV_FORMAT_FLAG));
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "paused-for-cache", MPV_FORMAT_FLAG));
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "percent-pos", MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "volume",           MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "sid",              MPV_FORMAT_INT64));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "aid",              MPV_FORMAT_INT64));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "sub-visibility",   MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "mute",             MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "core-idle",        MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "idle-active",      MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "pause",            MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "paused-for-cache", MPV_FORMAT_FLAG));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "percent-pos",      MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 420, "playback-time",    MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 420, "time-pos",         MPV_FORMAT_DOUBLE));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "osd-dimensions",   MPV_FORMAT_INT64));
+    mpv_check_error(mpv_observe_property(mpv, 69,  "duration",         MPV_FORMAT_DOUBLE));
 
-    mpv_check_error(
-        mpv_observe_property(mpv, 420, "playback-time", MPV_FORMAT_DOUBLE));
+#define FILES_LISTING_LIMIT (2048)
+    const char *dir = "G:/Media/memes/";
 
-    mpv_check_error(
-        mpv_observe_property(mpv, 420, "time-pos", MPV_FORMAT_DOUBLE));
-
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "osd-dimensions", MPV_FORMAT_INT64));
-
-    mpv_check_error(
-        mpv_observe_property(mpv, 69, "duration", MPV_FORMAT_DOUBLE));
-
-// #define FILES_LISTING_LIMIT (8*2 + 3)
-#define FILES_LISTING_LIMIT (222)
-
-#if defined(MINGW)
-    // const char* dir =
-    // "E:\\Torrents\\Kingdom.Of.The.Planet.Of.The.Apes.2024.2160p.BluRay.COMPLETE.REMUX.HDR.ENG.LATINO.FRENCH.ITALIAN.POLISH.JAPANESE.TrueHD.Atmos.7.1.H265-BEN.THE.MEN";
-    // const char *dir = "C:\\Users\\Administrator\\Downloads";
-    const char *dir = "D:\\Donwloads";
-    // TODO: Add better file filtering for Raylib
-    mp4files = LoadDirectoryFilesEx(dir, ".mp4", true);
-    // mp4files = LoadDirectoryFiles(dir);
-#else
-    mp4files =
-        LoadDirectoryFilesEx("/home/excyber/media/videos/", ".mp4", true);
-#endif
-
-    mp4files.count = mp4files.count < FILES_LISTING_LIMIT ? mp4files.count
-                                                          : FILES_LISTING_LIMIT;
-
-    printf("mp4files.count: %d\n", mp4files.count);
-    for (int i = 0; i < mp4files.count; ++i) {
-        printf("%s\n", mp4files.paths[i]);
-    }
 
     // SetConfigFlags(FLAG_MSAA_4X_HINT);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "MINGW");
@@ -689,7 +715,7 @@ int main(int argc, char *argv[]) {
     char fileNameToLoad[PATH_MAX] = { 0 };
 
 
-#define FONT_SIZE (40/2)
+#define FONT_SIZE 32
 
     Font jetbrains = LoadFontEx(
         "./res/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
@@ -711,7 +737,7 @@ int main(int argc, char *argv[]) {
         FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN
         // support mouse passthrough, only supported when
         | FLAG_WINDOW_UNDECORATED
-        // FLAG_WINDOW_MOUSE_PASSTHROUGH
+        | FLAG_WINDOW_MOUSE_PASSTHROUGH
         | FLAG_VSYNC_HINT
         // run program in borderless windowed mode
         // | FLAG_BORDERLESS_WINDOWED_MODE
@@ -767,7 +793,7 @@ int main(int argc, char *argv[]) {
 
 #endif
 
-    printf("Setting up mpv_set_wakeup_callback");
+    printf("Setting up mpv_set_wakeup_callback\n");
     mpv_set_wakeup_callback(mpv, on_mpv_events, mpv);
     printf("Setting up mpv_render_context_set_update_callback");
 #if defined(SOFTWARE_RENDERER)
@@ -799,14 +825,8 @@ int main(int argc, char *argv[]) {
 
     printf("Loaded Texture just fine\n");
 
-// NOTE: Alternatively, stat() can be used instead of access()
-#include <sys/stat.h>
-    // struct stat statbuf;
-    // if (stat(filename, &statbuf) == 0) result = true;
-
     if (!nob_file_exists(argv[1]) || !FileExists(argv[1])) {
-        TRACE(LOG_ERROR, "File %s does not exist, nothing is being played",
-              argv[1]);
+        TRACE(LOG_ERROR, "File %s does not exist, nothing is being played", argv[1]);
     } else {
         percent_positions = NULL;
         arrsetlen(percent_positions, 0);
@@ -824,7 +844,8 @@ int main(int argc, char *argv[]) {
 
 // printf("duration:%f fps:%f total_frames:%ld\r", duration, pfps,
 // total_frames); #define FPS 75 #define FPS 60
-#define FPS 35
+    #define FPS 60
+
     SetTargetFPS(FPS);
     char fps[123];
 
@@ -834,7 +855,10 @@ int main(int argc, char *argv[]) {
 
     int active = -1 , focus = 0;
     Vector2 scrollIndex = {4, 4};
+
     while (!WindowShouldClose()) {
+
+
         if (fileDialogState.SelectFilePressed)
         {
             // Load image file (if supported extension)
@@ -855,6 +879,27 @@ int main(int argc, char *argv[]) {
         SetShaderValue(fxaaShader, resolutionLoc, &resolution, SHADER_UNIFORM_VEC2);
 
         BeginTextureMode(target);
+        {
+
+            if (mp4files.count == 0 || IsFileDropped()) {
+                static const char *prompt = "Drag & drop a directory";
+                if (!drop_directory(&mp4files, &prompt)) {
+                    int fontSize = 20;
+                    int textWidth = MeasureText(prompt, fontSize);
+                    DrawText(prompt,
+                         GetScreenWidth()/2 - textWidth/2,
+                         GetScreenHeight()/2 - fontSize/2,
+                         fontSize, LIGHTGRAY
+                    );
+                } else {
+                    // printf("mp4files.count: %d\n", mp4files.count);
+                    // for (int i = 0; i < mp4files.count; ++i) {
+                    //     printf("%s\n", mp4files.paths[i]);
+                    // }
+                }
+            }
+        }
+
         ClearBackground(BLACK);
 
         Vector2   mouse_position  = GetMousePosition();
@@ -1033,6 +1078,7 @@ int main(int argc, char *argv[]) {
         }
 
 
+
         snprintf(fps, sizeof(fps), " %d fps", GetFPS());
         SetWindowTitle(fps);
 
@@ -1051,22 +1097,6 @@ int main(int argc, char *argv[]) {
 
             DrawRectangleRec(Pad(playback_rect, 2.0), Fade(BLACK, 0.3));
 
-
-
-            if (false) { // test
-
-                BeginTextureMode(target);
-                    ClearBackground(BLANK); // BLANK is (0,0,0,0) - fully transparent
-                    // Draw only where you want content, the rest stays transparent
-
-                    Rectangle bounds = {100, 100, 200, 150};
-                    DrawRectangleRec(bounds, ColorAlpha(BLUE, 0.5f)); // Semi-transparent blue
-                    DrawCircle(GetMouseX(), GetMouseY(), 20, RED);
-
-                    bounds.x += bounds.width;
-                    DrawRectangleRec(bounds, ColorAlpha(BLACK, 0.5f)); // Semi-transparent blue
-                EndTextureMode();
-            }
             int ret = GuiMoTrackingBar(playback_rect, sc.watched_segments,
                                            sc.segment_count, sc.duration, current,
                                            &tracking_percent_position, &seeking);
@@ -1103,7 +1133,7 @@ int main(int argc, char *argv[]) {
         static bool showMenu = false;
 
         static Vector2 menu_scroll_percent = { 0 } ;
-        if (draw_file_list) {
+        if (draw_file_list && mp4files.count > 0) {
             const char **text = (const char **)mp4files.paths;
             int active_old = active;
             static Vector2 scroll_percentage = {0};
@@ -1112,15 +1142,13 @@ int main(int argc, char *argv[]) {
                 CLITERAL(Rectangle){window_size.x / 6 - list_view_width / 2, 20,
                                     list_view_width, window_size.y / 1.5};
 
-            int a = GuiMoListView(filesBounds, text, mp4files.count,
-                                  &scroll_percentage, &active, &focus,
-                                  !showMenu, 12);
-            static bool donel = false;
-            if (active_old != active && active >= 0 &&
-                active < mp4files.count) {
+            if (filesBounds.width > 0 || filesBounds.height > 0) {
+                int a = GuiMoListView(filesBounds, text, mp4files.count, &scroll_percentage, &active, &focus, !showMenu, 12);
+            }
+            if (active_old != active && active >= 0 && active < mp4files.count) {
+                printf("\nactive_old=%d active =%d \n", active_old, active);
                 player_load_file(mpv, mp4files.paths[active]);
             }
-            assert(a == 0);
 
             {
                 static Rectangle menuBounds = {0};
@@ -1142,9 +1170,7 @@ int main(int argc, char *argv[]) {
                     int count = ARRAY_LEN(options);
                     // SCROLL_SLIDER_SIZE
                     GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, menuBounds.height/count);
-                    int a = GuiMoListView(menuBounds, options, count,
-                                          &menu_scroll_percent, &active, &focus,
-                                          true, 8);
+                    int a = GuiMoListView(menuBounds, options, count, &menu_scroll_percent, &active, &focus, true, 8);
                     if (active == 1 || active == 0) {
                         const char* clip = nob_absolute_path(currently_playing_path);
                         if (clip != NULL) {
@@ -1173,17 +1199,15 @@ int main(int argc, char *argv[]) {
                         menuBounds.x - hit_box_margin,
                         menuBounds.y - hit_box_margin,
                         menuBounds.width + 2 * hit_box_margin,
-                        menuBounds.height + 2 * hit_box_margin};
-                    bool is_mouse_on_menu_bar =
-                        CheckCollisionPointRec(mouse_position, men_hit_box);
+                        menuBounds.height + 2 * hit_box_margin
+                    };
+                    bool is_mouse_on_menu_bar = CheckCollisionPointRec(mouse_position, men_hit_box);
                     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
                         !is_mouse_on_menu_bar) {
                         showMenu = false;
                     }
                 }
             }
-        } else {
-            showMenu = false;
         }
 
         int drop_box_active = true;
@@ -1259,26 +1283,23 @@ int main(int argc, char *argv[]) {
             fileDialogState.SelectFilePressed = false;
         }
 
-        static float horz_value = 0.2;
-        static bool  horz_dragging = false;
+        EndTextureMode();
 
-    EndTextureMode();
+        BeginDrawing();
+            // BeginShaderMode(fxaaShader);
+            DrawTextureRec(target.texture,
+                          (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height },
+                          (Vector2){ 0, 0 },
+                          WHITE);  // WHITE preserves alpha channel
+            // EndShaderMode();
 
-    BeginDrawing();
-        // BeginShaderMode(fxaaShader);
-        DrawTextureRec(target.texture,
-                      (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height },
-                      (Vector2){ 0, 0 },
-                      WHITE);  // WHITE preserves alpha channel
-        // EndShaderMode();
-
-    EndDrawing();
-    nob_temp_reset();
+        EndDrawing();
+        nob_temp_reset();
 
     }
 
 done:
-    // CloseWindow();
+    CloseWindow(); // Give the sensation of closing the application fast but then do some collecting
     // Add final segment
     // ■ Label followed by a declaration is a C23 extension
     double start = sc.segment_start, end = sc.last_position;
@@ -1307,6 +1328,7 @@ done:
     printf("properly terminated\n");
     return 0;
 }
+
 
 void print_all_file_progress() {
     printf("TOTAL: %ld\n", arrlen(file_progress_darray));
