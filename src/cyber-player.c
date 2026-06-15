@@ -453,14 +453,14 @@ playback_time_done:
         if (prop->format == MPV_FORMAT_INT64) {
             int64_t osd_dimensions = *(int64_t *)prop->data;
             assert(MPV_FORMAT_INT64 == prop->format);
-            TRACE(LOG_INFO, "Current %s: %ld\n", prop->name, osd_dimensions);
+            TRACE(LOG_DEBUG, "Current %s: %ld\n", prop->name, osd_dimensions);
         }
     }
 
     if (strcmp(prop->name, "duration") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             sc.duration = *(double *)prop->data;
-            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, sc.duration);
+            TRACE(LOG_DEBUG, "Current %s: %f\n", prop->name, sc.duration);
         }
         // assert(0);
     }
@@ -468,7 +468,7 @@ playback_time_done:
     if (strcmp(prop->name, "time-pos") == 0) {
         if (prop->format == MPV_FORMAT_DOUBLE) {
             double time_position = *(double *)prop->data;
-            TRACE(LOG_INFO, "Current %s: %f\n", prop->name, time_position);
+            TRACE(LOG_DEBUG, "Current %s: %f\n", prop->name, time_position);
             // if (segment_control.last_position < 0) {
             //     segment_start = time_position;
             // } else if (time_position - segment_control.last_position > 1.0) {
@@ -635,9 +635,6 @@ int main(int argc, char *argv[]) {
         shput(file_progress_hash_map, strdup(file_progress_darray[i].filename), i);
     }
 
-    if (argc != 2) {
-        die("pass a single media file as argument");
-    }
 
     mpv_handle *mpv = mpv_create();
 
@@ -717,15 +714,15 @@ int main(int argc, char *argv[]) {
 
 #define FONT_SIZE 32
 
-    Font jetbrains = LoadFontEx(
-        "./res/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
+    Font jetbrains = LoadFontEx("./res/fonts/JetBrainsMonoNerdFont-Medium.ttf", FONT_SIZE, NULL, 0);
     GenTextureMipmaps(&jetbrains.texture);
-    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_BILINEAR);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
+
 
 
     // FILTER_TRILINEAR requires generated mipmaps
-    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
-    // SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_TRILINEAR);
+    SetTextureFilter(jetbrains.texture, TEXTURE_FILTER_ANISOTROPIC_16X);
     GuiSetFont(jetbrains);
     GuiSetStyle(LISTVIEW, TEXT_ALIGNMENT, TEXT_ALIGN_LEFT);
     GuiSetStyle(DEFAULT, TEXT_SIZE, FONT_SIZE);
@@ -813,19 +810,11 @@ int main(int argc, char *argv[]) {
                    PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
     Texture shapesTexture = LoadTextureFromImage(shapesImage);
 
-    if (true) {
-        // GenTextureMipmaps(&shapesTexture);
-        // SetTextureFilter(shapesTexture, TEXTURE_FILTER_TRILINEAR);
-        // SetTextureFilter(shapesTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
-
-        // SetShapesTexture(shapesTexture, GetShapesTextureRectangle());
-
-    }
     UnloadImage(image);
 
     printf("Loaded Texture just fine\n");
 
-    if (!nob_file_exists(argv[1]) || !FileExists(argv[1])) {
+    if (argc > 1 && !nob_file_exists(argv[1]) || !FileExists(argv[1])) {
         TRACE(LOG_ERROR, "File %s does not exist, nothing is being played", argv[1]);
     } else {
         percent_positions = NULL;
@@ -1138,9 +1127,7 @@ int main(int argc, char *argv[]) {
             int active_old = active;
             static Vector2 scroll_percentage = {0};
             float list_view_width = window_size.x / 4;
-            Rectangle filesBounds =
-                CLITERAL(Rectangle){window_size.x / 6 - list_view_width / 2, 20,
-                                    list_view_width, window_size.y / 1.5};
+            Rectangle filesBounds = CLITERAL(Rectangle){window_size.x / 6 - list_view_width / 2, 20, list_view_width, window_size.y / 1.5};
 
             if (filesBounds.width > 0 || filesBounds.height > 0) {
                 int a = GuiMoListView(filesBounds, text, mp4files.count, &scroll_percentage, &active, &focus, !showMenu, 12);
@@ -1165,10 +1152,8 @@ int main(int argc, char *argv[]) {
                 if (showMenu) {
                     const char *options[] = {
                         "yank path", "explorer",
-                        "copy file", "copy file", "copy file"
                     };
                     int count = ARRAY_LEN(options);
-                    // SCROLL_SLIDER_SIZE
                     GuiSetStyle(SCROLLBAR, SCROLL_SLIDER_SIZE, menuBounds.height/count);
                     int a = GuiMoListView(menuBounds, options, count, &menu_scroll_percent, &active, &focus, true, 8);
                     if (active == 1 || active == 0) {
@@ -1176,22 +1161,17 @@ int main(int argc, char *argv[]) {
                         if (clip != NULL) {
                             printf("clip=%s\n", clip);
                             SetClipboardText(clip);
-                            GuiDrawText(
-                                clip,
-                                MiddleOf(window_rect, MeasureText(clip, 32), 32), 0,
-                                RED);
-                                // #if defined(__MINGW64__)
-                                if (active == 1) {
-                                    Nob_Cmd cmd = {0};
-                                    // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/select,", clip);
-                                    cmd_append(&cmd, "explorer.exe", "/select,", clip);
-                                    // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/SEPERATE", "/select,", clip);
-                                    // cmd_append(&cmd, "explorer.exe", nob_dir_of(clip));
-                                    cmd_run_async(cmd);
-                                }
-                                // #endif
+                            GuiDrawText(clip, MiddleOf(window_rect, MeasureText(clip, 32), 32), 0, RED);
+                            if (active == 1) {
+                                Nob_Cmd cmd = {0};
+                                // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/select,", clip);
+                                cmd_append(&cmd, "explorer.exe", "/select,", clip);
+                                // cmd_append(&cmd, "explorer.exe", "/NoShellRegistrationCheck", "/SEPERATE", "/select,", clip);
+                                // cmd_append(&cmd, "explorer.exe", nob_dir_of(clip));
+                                cmd_run_async(cmd);
+                            }
                         }
-
+                        showMenu = false;
                     }
 
                     int hit_box_margin = 20;
@@ -1205,6 +1185,7 @@ int main(int argc, char *argv[]) {
                     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
                         !is_mouse_on_menu_bar) {
                         showMenu = false;
+                        printf("Closing menu\n");
                     }
                 }
             }

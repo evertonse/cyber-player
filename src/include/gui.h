@@ -138,13 +138,13 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
 
 
-    const int horizontal_spacing = -1;
-    const int vertical_spacing   = -4;
+    static int horizontal_spacing = 0;
+    static int vertical_spacing  = 0;
 
     static bool font_loaded = false;
 
     static Font  font;
-    const  float font_size   = 24;
+    static float font_size   = 18;
     static float item_height = 0;
 
 
@@ -154,11 +154,20 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
     if (font_loaded == false) {
         font_loaded = true;
 
-        font = LoadFontEx("./res/fonts/Alegreya-Regular.ttf", font_size, NULL, 0);
 
-        GenTextureMipmaps(&font.texture);
-        SetTextureFilter(font.texture, TEXTURE_FILTER_TRILINEAR);
-        item_height = vertical_spacing + MeasureTextEx(font, "_", font_size, horizontal_spacing).y;
+        if (true) {
+            horizontal_spacing = -1;
+            vertical_spacing   = -4;
+            font_size          = 24;
+            font = LoadFontEx("./res/fonts/Alegreya-Regular.ttf", font_size, NULL, 0);
+            // GenTextureMipmaps(&font.texture);
+            // SetTextureFilter(font.texture, TEXTURE_FILTER_TRILINEAR);
+            item_height = vertical_spacing + MeasureTextEx(font, "_", font_size, horizontal_spacing).y;
+        } else {
+            font = GetFontDefault();
+            item_height = vertical_spacing + MeasureTextEx(font, "_", font_size, horizontal_spacing).y;
+        }
+
         assert(
             MeasureTextEx(font, "_", font_size, horizontal_spacing).y == font_size
             && "Expected to measure the same thing but might not be because of Line spacing which might be set with SetTextLineSpacing()"
