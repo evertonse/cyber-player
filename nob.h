@@ -416,8 +416,8 @@ typedef struct {
 } Nob_String_View;
 
 const char *nob_temp_sv_to_cstr(Nob_String_View sv);
-
 Nob_String_View nob_sv_chop_by_delim(Nob_String_View *sv, char delim);
+
 Nob_String_View nob_sv_trim(Nob_String_View sv);
 Nob_String_View nob_sv_trim_left(Nob_String_View sv);
 Nob_String_View nob_sv_trim_right(Nob_String_View sv);
@@ -495,7 +495,7 @@ static int closedir(DIR *dirp);
 // minirent.h HEADER END ////////////////////////////////////////
 
 #undef PATH_MAX
-#define PATH_MAX 2048 // The default is 256 on some systems headers, and might be too small nowadays
+#define PATH_MAX 2*2048 // The default is 256 on some systems headers, and might be too small nowadays
 
 #endif // NOB_H_
 
@@ -528,7 +528,7 @@ bool nob_remove_file_if_exists(const char *path)
 {
 
     if (!nob_file_exists(path)) {
-        nob_log(NOB_INFO, "file `%s` does not exist", path);
+        nob_log(NOB_INFO, "file `%s` does not exist, so no need to remove it.", path);
         return true;
     }
     
@@ -1196,6 +1196,7 @@ defer:
     return result;
 }
 
+//------------------------@@@FromHere@@@--------------------------//
 // @test
 // Checks if a string matches a pattern with '*' wildcards
 static bool match_pattern(const char* pattern, const char* str) {
@@ -1226,7 +1227,7 @@ static bool match_pattern(const char* pattern, const char* str) {
 
 // @test
 // Split path into directory and pattern parts
-static void split_path_pattern(const char* path, 
+static void split_path_pattern(const char* path,
                              Nob_String_Builder* dir_part,
                              Nob_String_Builder* pattern_part) {
     const char* last_slash = strrchr(path, '/');
@@ -1292,7 +1293,6 @@ defer:
     nob_da_free(full_path);
 }
 
-// @test
 Nob_File_Paths nob_path_glob(const char* pattern) {
     Nob_File_Paths result = {0};
     Nob_String_Builder dir_part = {0};
@@ -1349,6 +1349,7 @@ const char *nob_base_name(const char *file_path)
     return last_separator + 1;
 }
 
+// @test
 const char *nob_dir_of(const char *file_path)
 {
     if (file_path == NULL) return NULL;
@@ -1404,7 +1405,7 @@ const char *nob_dir_of(const char *file_path)
     return nob_temp_sprintf("%s", dir_path);
 }
 
-const char* nob_path_without_ext(const char *file_path, bool last) 
+const char* nob_path_without_ext(const char *file_path, bool last)
 {
     if (file_path == NULL) return NULL;
     

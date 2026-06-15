@@ -108,10 +108,19 @@ bool GuiMoPopup(Rectangle bounds, const char *message, double *time) {
 int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrollPercentage, int *active, int *focus, bool react, int scrollThicknes)
 {
     int ret = 0;
-    assert(bounds.height > 0 && bounds.width > 0 && "check if this is the correct behaviour");
+
+    if(!(bounds.height > 0 && bounds.width > 0)) {
+        printf("%s: Trying to create a list view with bounds={%fx%f}\n", __func__, bounds.height, bounds.width);
+        return ret;
+    }
+
+    if (count < 1 || !text) {
+        printf("%s: Trying to create a list view with not text options\n", __func__);
+        return ret;
+    }
 
     Vector2 mouse_position = GetMousePosition();
-    Vector2 mouse_wheel = GetMouseWheelMoveV();
+    Vector2 mouse_wheel    = GetMouseWheelMoveV();
 
     float whell_speed = 0.02;
     if (IsKeyDown(KEY_LEFT_CONTROL)){
@@ -278,6 +287,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
     bool foundActive = false;
 
+
     // for (int i = 0; i <= count-1; ++i) {
     for (int i = startIndex; i <= endIndex; ++i) {
         const char *file_path = text[i];
@@ -304,22 +314,23 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
 
 
 
-            if (react ) {
+            if (react) {
                 *focus = i;
                 usedTextColor = fontColorFocused;
                 usedBackgroundColor = backgroundFocused;
                 usedBorderColor = borderColorFocused;
                 if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     *active = i;
+                    printf("active = %d\n", *active);
                     usedTextColor = fontColorPressed;
                     usedBackgroundColor = backgroundPressed;
                     usedBorderColor = borderColorPressed;
                 }
             }
 
-                    usedTextColor = fontColorPressed;
-                    usedBackgroundColor = backgroundPressed;
-                    usedBorderColor = borderColorPressed;
+            usedTextColor = fontColorPressed;
+            usedBackgroundColor = backgroundPressed;
+            usedBorderColor = borderColorPressed;
         } else {
             if (i == *active || i == *focus) {
                 usedTextColor       = fontColorFocused;
@@ -328,6 +339,7 @@ int GuiMoListView(Rectangle bounds, const char **text, int count, Vector2 *scrol
             }
         }
         GuiDrawRectangle(itemBounds, borderWidth, usedBorderColor, usedBackgroundColor);
+        // printf("%s {%f,%f}, fontsize=%f horizontal_spacing=%d\n", file_path, text_pos.x, text_pos.y, font_size, horizontal_spacing);
         DrawTextEx(font, file_path, text_pos, font_size, horizontal_spacing, usedTextColor);
     }
 

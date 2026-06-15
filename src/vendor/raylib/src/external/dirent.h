@@ -1,183 +1,276 @@
-/****************************************************************************
 
-    Declaration of POSIX directory browsing functions and types for Win32.
+//
+// minirent.h UTF-8 dirent for Windows (no <windows.h> required)
+//   x86_64-w64-mingw32-gcc -D_WIN32 -DMINIRENT_TEST_MAIN -x c dirent.h -o dirent.exe && ./dirent.exe//
+//
+#define MINIRENT_IMPLEMENTATION
 
-    Author:  Kevlin Henney (kevlin@acm.org, kevlin@curbralan.com)
-    History: Created March 1997. Updated June 2003.
-             Reviewed by Ramon Santamaria for raylib on January 2020.
-
-    Copyright Kevlin Henney, 1997, 2003. All rights reserved.
-
-    Permission to use, copy, modify, and distribute this software and its
-    documentation for any purpose is hereby granted without fee, provided
-    that this copyright and permissions notice appear in all copies and
-    derivatives.
-    
-    This software is supplied "as is" without express or implied warranty.
-
-    But that said, if there are any problems please get in touch.
-
-****************************************************************************/
-
-#ifndef DIRENT_H
-#define DIRENT_H
-
-// Allow custom memory allocators
-#ifndef DIRENT_MALLOC
-    #define DIRENT_MALLOC(sz)   malloc(sz)
+#ifdef MINIRENT_TEST_MAIN
+#ifndef MINIRENT_IMPLEMENTATION
+#define MINIRENT_IMPLEMENTATION
 #endif
-#ifndef DIRENT_FREE
-    #define DIRENT_FREE(p)      free(p)
 #endif
 
-//----------------------------------------------------------------------------------
-// Types and Structures Definition
-//----------------------------------------------------------------------------------
+#ifndef _WIN32
+#include <dirent.h>
+#else // _WIN32
 
-// Fordward declaration of DIR, implementation below
-typedef struct DIR DIR;
+#ifndef MINIRENT_H_
+#define MINIRENT_H_
 
-struct dirent {
-    char *d_name;
-};
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-//------------------------------------------------------------------------------------
-// Functions Declaration
-//------------------------------------------------------------------------------------
-DIR *opendir(const char *name);
-int closedir(DIR *dir);
-struct dirent *readdir(DIR *dir);
-void rewinddir(DIR *dir);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif      // DIRENT_H
-
-/****************************************************************************
-
-    Implementation of POSIX directory browsing functions and types for Win32.
-
-    Author:  Kevlin Henney (kevlin@acm.org, kevlin@curbralan.com)
-    History: Created March 1997. Updated June 2003.
-             Reviewed by Ramon Santamaria for raylib on January 2020.
-
-    Copyright Kevlin Henney, 1997, 2003. All rights reserved.
-
-    Permission to use, copy, modify, and distribute this software and its
-    documentation for any purpose is hereby granted without fee, provided
-    that this copyright and permissions notice appear in all copies and
-    derivatives.
-    
-    This software is supplied "as is" without express or implied warranty.
-
-    But that said, if there are any problems please get in touch.
-
-****************************************************************************/
-
-#include <io.h>         // _findfirst and _findnext set errno iff they return -1
+#include <assert.h>
+#include <errno.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
-//----------------------------------------------------------------------------------
-// Types and Structures Definition
-//----------------------------------------------------------------------------------
-typedef ptrdiff_t handle_type;  // C99's intptr_t not sufficiently portable
+// Minimal Win32 types
+#ifndef MINIRENT_WIN32_TYPES
+#define MINIRENT_WIN32_TYPES
 
-struct DIR {
-    handle_type handle;         // -1 for failed rewind
-    struct _finddata_t info;
-    struct dirent result;       // d_name null iff first time
-    char *name;                 // null-terminated char string
+#define MINIRENT_MAX_PATH 260
+#define MINIRENT_CP_UTF8 65001U
+#define MINIRENT_ERROR_NO_MORE 18UL
+#define MINIRENT_FILE_ATTRIBUTE_DIRECTORY 0x10UL
+
+typedef void *MINIRENT_HANDLE;
+typedef unsigned long MINIRENT_DWORD;
+typedef int MINIRENT_BOOL;
+typedef unsigned short MINIRENT_WCHAR;
+
+#define MINIRENT_INVALID_HANDLE ((MINIRENT_HANDLE)(~(size_t)0))
+
+typedef struct {
+   MINIRENT_DWORD lo, hi;
+} MINIRENT_FILETIME;
+
+typedef struct {
+    MINIRENT_DWORD    dwFileAttributes;
+    MINIRENT_FILETIME ftCreationTime;
+    MINIRENT_FILETIME ftLastAccessTime;
+    MINIRENT_FILETIME ftLastWriteTime;
+    MINIRENT_DWORD    nFileSizeHigh;
+    MINIRENT_DWORD    nFileSizeLow;
+    MINIRENT_DWORD    dwReserved0;
+    MINIRENT_DWORD    dwReserved1;
+    MINIRENT_WCHAR    cFileName[MINIRENT_MAX_PATH];
+    MINIRENT_WCHAR    cAlternateFileName[14];
+}   MINIRENT_FIND_DATAW;
+
+//                    Direct          kernel32  imports                        —                   no CRT                 wrapper involvement
+__declspec(dllimport) MINIRENT_HANDLE __stdcall FindFirstFileW(const           MINIRENT_WCHAR      *, MINIRENT_FIND_DATAW *);
+__declspec(dllimport) MINIRENT_BOOL   __stdcall FindNextFileW(MINIRENT_HANDLE, MINIRENT_FIND_DATAW *);
+__declspec(dllimport) MINIRENT_BOOL   __stdcall FindClose(MINIRENT_HANDLE);
+__declspec(dllimport) MINIRENT_DWORD  __stdcall GetLastError(void);
+
+__declspec(dllimport) int __stdcall MultiByteToWideChar(unsigned int CodePage, MINIRENT_DWORD dwFlags, const char *lpMultiByteStr, int cbMultiByte, MINIRENT_WCHAR *lpWideCharStr, int cchWideChar);
+
+#ifndef RAYLIB_H // Raylib already defines these
+
+__declspec(dllimport) int __stdcall WideCharToMultiByte(unsigned int CodePage, MINIRENT_DWORD dwFlags, const MINIRENT_WCHAR *lpWideCharStr, int cchWideChar, char *lpMultiByteStr, int cbMultiByte, const char *lpDefaultChar, MINIRENT_BOOL *lpUsedDefaultChar);
+#endif
+
+#endif // MINIRENT_WIN32_TYPES
+
+// UTF-8 d_name: up to 3 UTF-8 bytes per UTF-16 code unit, plus null byte
+#define MINIRENT_MAX_UTF8 (MINIRENT_MAX_PATH * 3 + 1)
+
+struct dirent {
+   char d_name[MINIRENT_MAX_UTF8];
+   MINIRENT_DWORD d_attrib; // raw WIN32_FIND_DATAW.dwFileAttributes might be useful?
 };
 
-DIR *opendir(const char *name)
-{
-    DIR *dir = 0;
+typedef struct DIR DIR;
 
-    if (name && name[0])
-    {
-        size_t base_length = strlen(name);
-        
-        // Search pattern must end with suitable wildcard
-        const char *all = strchr("/\\", name[base_length - 1]) ? "*" : "/*";
+DIR *opendir(const char *dirpath);
+struct dirent *readdir(DIR *dirp);
+int closedir(DIR *dirp);
 
-        if ((dir = (DIR *)DIRENT_MALLOC(sizeof *dir)) != 0 &&
-            (dir->name = (char *)DIRENT_MALLOC(base_length + strlen(all) + 1)) != 0)
-        {
-            strcat(strcpy(dir->name, name), all);
+#endif // MINIRENT_H_
 
-            if ((dir->handle = (handle_type) _findfirst(dir->name, &dir->info)) != -1)
-            {
-                dir->result.d_name = 0;
-            }
-            else  // rollback
-            {
-                DIRENT_FREE(dir->name);
-                DIRENT_FREE(dir);
-                dir = 0;
-            }
-        }
-        else  // rollback
-        {
-            DIRENT_FREE(dir);
-            dir   = 0;
-            errno = ENOMEM;
-        }
-    }
-    else errno = EINVAL;
+#ifdef MINIRENT_IMPLEMENTATION
 
-    return dir;
+struct DIR {
+   MINIRENT_HANDLE     hFind;
+   MINIRENT_FIND_DATAW data;
+   struct dirent      *dirent;
+};
+
+static int minirent__multibyte_to_wide(const char *src, int srclen, MINIRENT_WCHAR *dst, int dstsz) {
+    return MultiByteToWideChar(MINIRENT_CP_UTF8, 0, (void *)src, srclen, (void *)dst, dstsz);
 }
 
-int closedir(DIR *dir)
-{
-    int result = -1;
-
-    if (dir)
-    {
-        if (dir->handle != -1) result = _findclose(dir->handle);
-
-        DIRENT_FREE(dir->name);
-        DIRENT_FREE(dir);
-    }
-
-    // NOTE: All errors ampped to EBADF
-    if (result == -1) errno = EBADF;
-
-    return result;
+static int minirent__wide_to_multibyte(const MINIRENT_WCHAR *src, char *dst, int dstsz) {
+    return WideCharToMultiByte(MINIRENT_CP_UTF8, 0, (void *)src, -1, (void *)dst, dstsz, (void *)0, (void *)0);
 }
 
-struct dirent *readdir(DIR *dir)
-{
-    struct dirent *result = 0;
+// Normalise slashes to backslash, collapse runs, strip trailing backslash
+// (but keep drive roots like "C:\").
+// Returns written length (without null byte).
+static size_t minirent__clean_path(const char *src, char *dst, size_t dstsz) {
+   if (!src || dstsz == 0)
+      return 0;
 
-    if (dir && dir->handle != -1)
-    {
-        if (!dir->result.d_name || _findnext(dir->handle, &dir->info) != -1)
-        {
-            result = &dir->result;
-            result->d_name = dir->info.name;
-        }
-    }
-    else errno = EBADF;
+   size_t wi = 0, si = 0;
 
-    return result;
+   while (src[si] != '\0' && wi < dstsz - 1) {
+      char c = src[si++];
+      if (c == '/' || c == '\\') {
+         // Preserve leading "\\" for UNC paths
+         int is_unc = (wi == 0 && (src[si] == '/' || src[si] == '\\'));
+         dst[wi++] = '\\';
+         if (is_unc && wi < dstsz - 1)
+            dst[wi++] = '\\';
+         while (src[si] == '/' || src[si] == '\\')
+            si++;
+      } else {
+         dst[wi++] = c;
+      }
+   }
+
+   // Strip trailing backslashes unless it's a drive root ("C:\")
+   while (wi > 1 && dst[wi - 1] == '\\') {
+      if (wi >= 3 && dst[wi - 2] == ':')
+         break;
+      wi--;
+   }
+
+   dst[wi] = '\0';
+   return wi;
 }
 
-void rewinddir(DIR *dir)
-{
-    if (dir && dir->handle != -1)
-    {
-        _findclose(dir->handle);
-        dir->handle = (handle_type) _findfirst(dir->name, &dir->info);
-        dir->result.d_name = 0;
-    }
-    else errno = EBADF;
+// Build a wide-char "path\*" glob string for FindFirstFileW.
+// Caller must free() the returned buffer.
+static MINIRENT_WCHAR *minirent__make_glob(const char *utf8) {
+   char clean[MINIRENT_MAX_PATH * 4];
+   size_t clen = minirent__clean_path(utf8, clean, sizeof(clean));
+   if (clen == 0)
+      return NULL;
+
+   // Query required wide-char buffer size
+   int wlen = minirent__multibyte_to_wide(clean, (int)clen, NULL, 0);
+   if (wlen <= 0)
+      return NULL;
+
+   // Allocate wide chars + backslash + asterisk + null byte
+   MINIRENT_WCHAR *buf = (MINIRENT_WCHAR *)calloc((size_t)(wlen + 3), sizeof(MINIRENT_WCHAR));
+   if (!buf)
+      return NULL;
+
+   minirent__multibyte_to_wide(clean, (int)clen, buf, wlen);
+   buf[wlen] = (MINIRENT_WCHAR)'\\';
+   buf[wlen + 1] = (MINIRENT_WCHAR)'*';
+   buf[wlen + 2] = (MINIRENT_WCHAR)'\0';
+   return buf;
 }
+
+DIR *opendir(const char *dirpath) {
+   assert(dirpath);
+
+   MINIRENT_WCHAR *glob = minirent__make_glob(dirpath);
+   if (!glob) {
+      errno = ENOMEM;
+      return NULL;
+   }
+
+   DIR *dir = (DIR *)calloc(1, sizeof(DIR));
+   if (!dir) {
+      free(glob);
+      errno = ENOMEM;
+      return NULL;
+   }
+
+   dir->hFind = FindFirstFileW(glob, &dir->data);
+   free(glob);
+
+   if (dir->hFind == MINIRENT_INVALID_HANDLE) {
+      errno = ENOENT;
+      free(dir);
+      return NULL;
+   }
+   return dir;
+}
+
+struct dirent *readdir(DIR *dirp) {
+   assert(dirp);
+
+   if (dirp->dirent == NULL) {
+      dirp->dirent = (struct dirent *)calloc(1, sizeof(struct dirent));
+      if (!dirp->dirent) {
+         errno = ENOMEM;
+         return NULL;
+      }
+   } else {
+      if (!FindNextFileW(dirp->hFind, &dirp->data)) {
+         if (GetLastError() != MINIRENT_ERROR_NO_MORE)
+            errno = ENOSYS;
+         return NULL;
+      }
+   }
+
+   memset(dirp->dirent->d_name, 0, sizeof(dirp->dirent->d_name));
+   if (!minirent__wide_to_multibyte(dirp->data.cFileName, dirp->dirent->d_name, (int)sizeof(dirp->dirent->d_name))) {
+      errno = EILSEQ;
+      return NULL;
+   }
+
+   dirp->dirent->d_attrib = dirp->data.dwFileAttributes;
+   return dirp->dirent;
+}
+
+int closedir(DIR *dirp) {
+   assert(dirp);
+   int rc = FindClose(dirp->hFind) ? 0 : (errno = ENOSYS, -1);
+   if (dirp->dirent)
+      free(dirp->dirent);
+   free(dirp);
+   return rc;
+}
+
+#endif // MINIRENT_IMPLEMENTATION
+
+#ifdef MINIRENT_TEST_MAIN
+
+#include <stdio.h>
+
+__declspec(dllimport) MINIRENT_BOOL __stdcall SetConsoleOutputCP(unsigned int wCodePageID);
+__declspec(dllimport) MINIRENT_BOOL __stdcall SetConsoleCP(unsigned int wCodePageID);
+int main(int argc, char **argv) {
+   const char *default_directory = "G:\\Media\\memes";
+   const char *path = (argc > 1) ? argv[1] : default_directory;
+
+   // NOTE: To actually see utf8 on the console we need this apparently
+   SetConsoleOutputCP(MINIRENT_CP_UTF8);
+   SetConsoleCP(MINIRENT_CP_UTF8);
+
+   printf("opendir(\"%s\")\n", path);
+   printf("------------------------------------\n");
+
+   DIR *dir = opendir(path);
+   if (!dir) {
+      perror("opendir");
+      return 1;
+   }
+
+   struct dirent *ent;
+   int n_dirs = 0, n_files = 0;
+
+   while ((ent = readdir(dir)) != NULL) {
+      int is_dir = (ent->d_attrib & MINIRENT_FILE_ATTRIBUTE_DIRECTORY) != 0;
+      printf("  [%s] %s\n", is_dir ? "DIR " : "FILE", ent->d_name);
+      if (is_dir)
+         n_dirs++;
+      else
+         n_files++;
+   }
+
+   closedir(dir);
+
+   printf("------------------------------------\n");
+   printf("dirs=%d  files=%d\n", n_dirs, n_files);
+   return 0;
+}
+
+#endif // MINIRENT_TEST_MAIN
+
+#endif // _WIN32

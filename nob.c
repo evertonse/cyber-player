@@ -8,6 +8,10 @@
 
 #include <libgen.h>
 
+
+#define MPV_INCLUDE_PATH "src/vendor/mpv-dev-x86_64-20260614-git-7d245fd100/include/"
+#define MPV_LIBRARY_PATH "src/vendor/mpv-dev-x86_64-20260614-git-7d245fd100/"
+
 #define NOB_IMPLEMENTATION
 #define NOB_STRIP_PREFIX
 #include "./nob.h"
@@ -15,6 +19,7 @@
 #define BUILD_DIR ".build"
 #define SRC_DIR "./src"
 #define BIN "main"
+#define SDL_STATIC
 
 
 static struct {
@@ -56,6 +61,7 @@ typedef enum {
 static struct {
     const char *CC, *AR, *OBJCOPY; // Must be gnu flag compliant for all of these binaries
     const char *libraylib_path;    // libraylib.a
+    const char *libsdl3_patched_path;    // libsld3.a
     Platform platform;
 } config =
 #if defined(__MINGW32__) || defined(__MINGW64__)
@@ -84,7 +90,8 @@ static struct {
 const char* gen_build_dir();
 
 
-#define SDL3_VERSION "SDL3-3.1.6-x86_64-w64-mingw64-patched" // Patched to fix SDL_GetClipboardData() on Windows
+#define SDL3_VERSION "SDL3-3.1.7-x86_64-w64-mingw64-patched" // Patched to fix SDL_GetClipboardData() on Windows
+
 // #define SDL3_VERSION "SDL3-3.1.3-x86_64-w64-mingw32"
 // #define SDL3_VERSION "SDL3-x86_64-w64-mingw32"
 
@@ -156,8 +163,7 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
     { // Extra Defines for debug  in .h files
 
         sb_append_cstr(sb, "    \"");
-        static const bool working_on_mingw = true;
-        if (working_on_mingw) {
+        if (flags.mingw32) {
             sb_printf(sb, "%s", "x86_64-w64-mingw32-gcc");
         } else {
             sb_printf(sb, "%s", "cc");
@@ -170,7 +176,7 @@ void gen_compile_commands_json(String_Builder* sb, Cmd cmd, File_Paths hfiles) {
             "GUI_IMPLEMENTATION", "NOB_STRIP_PREFIX", "NOB_IMPLEMENTATION",
             "RAYGUI_IMPLEMENTATION", "RAYGUI_MO_IMPLEMENTATION",
             "RLGL_IMPLEMENTATION",
-            "SUPPORT_CLIPBOARD_IMAGE",
+            // "SUPPORT_CLIPBOARD_IMAGE",
             "GUI_FILE_DIALOG_IMPLEMENTATION",
             "GUI_WINDOW_FILE_DIALOG_IMPLEMENTATION",
 
@@ -268,7 +274,7 @@ bool sdl_redefine_symbol_in_lib(const char *static_lib_path) {
 //
 void concat_static_libs(const char* out, const char** libs) {
     Cmd cmd = {0};
-    cmd_append(&cmd, config.AR, "crsT", out);
+    cmd_append(&cmd, config.AR, "rsv", out);
 
     const char *lib = NULL;
     while ((lib = libs++[0])) {
@@ -276,10 +282,14 @@ void concat_static_libs(const char* out, const char** libs) {
     }
 
     if(cmd_run_sync(cmd)) {
-        nob_log(INFO, "OK: %s", __PRETTY_FUNCTION__);
+        nob_log(INFO, "%s: Ar command ran successfully", __PRETTY_FUNCTION__);
+    } else {
+        nob_log(ERROR, "%s: Ar command failed", __PRETTY_FUNCTION__);
+        exit(1);
     }
 
 }
+
 
 
 void cmd_append_sdl(Cmd *cmd) {
@@ -290,10 +300,9 @@ void cmd_append_sdl(Cmd *cmd) {
 
     switch (config.platform) {
         case PLATFORM_SDL3: {
+            nob_log(INFO, "Adding SDL3 include information");
             if (flags.mingw32) {
                 const char *base_dir =  "src/vendor/SDL3/"SDL3_VERSION;
-
-                // const char *base_dir =  "src/vendor/SDL3/SDL3-3.1.6-x86_64-w64-mingw32";
                 cmd_append(cmd,
                        tprintf("-I./%s/include/SDL3/", base_dir), // Make #include "SDL.h" possible
                        tprintf("-I./%s/include/",      base_dir), // Allow #include  "SLD3/SDL_something.h"
@@ -306,7 +315,8 @@ void cmd_append_sdl(Cmd *cmd) {
                        "-lgdi32", "-lole32", "-lcfgmgr32",
                        "-limm32", "-loleaut32", "-lversion", "-lsetupapi",
                        "-lwinmm", "-luuid",
-                       "-static"
+                       // "-ladvapi32", "-lshell32", "-luser32",
+                       "-static", "-static-libgcc"
                 );
             } else {
                 nob_log(INFO, "SDL3 if only supported on mingw rn");
@@ -369,7 +379,7 @@ bool build_raylib() {
 
     const char *build_path = gen_build_dir();
     config.libraylib_path = strdup(tprintf("%s/libraylib.a", build_path));
-
+    
 
     if (!nob_mkdir_if_not_exists_recursive(build_path)) {
         return_defer(false);
@@ -383,8 +393,6 @@ bool build_raylib() {
     Procs procs = {0};
     for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
         const char* module = raylib_modules[i];
-        bool skip_rglfw = PLATFORM_GLFW != config.platform && 0 == strcmp(module, "rglfw");
-        if (skip_rglfw) continue;
 
         const char *input_path  = tprintf("%s/%s.c", RAYLIB_SOURCE_DIR, module);
         const char *output_path = tprintf("%s/%s.o", build_path, module);
@@ -407,12 +415,16 @@ bool build_raylib() {
                    "-DSUPPORT_TRACELOG_DEBUG=1",
                    "-DSUPPORT_CLIPBOARD_IMAGE=1",
                    "-DSUPPORT_FILEFORMAT_BMP=1",
+                   "-DSUPPORT_MODULE_RTEXTURES=1",
+                   // "-DSTBI_REQUIRED=1", // Not needed because raylib defines this
                    #ifdef DEBUG_RAYLIB
                        "-ggdb",
                        "-DRLGL_SHOW_GL_DETAILS_INFO=1"
                     #endif
-                   "-DSUPPORT_FILEFORMAT_FLAC=1"
-                   "-fmax-errors=5"
+                   "-DSUPPORT_FILEFORMAT_FLAC=1",
+                   "-fmax-errors=5",
+                    "-finput-charset=UTF-8"
+
             );
 
             switch (config.platform) {
@@ -490,45 +502,41 @@ bool build_raylib() {
     //-------------------------(AR)CHIVING-----------------------------------//
     //-----------------------------------------------------------------------//
 
-
-    const char *tmp_libraylib_path = config.libraylib_path;
-    if (PLATFORM_SDL3 == config.platform) {
-        tmp_libraylib_path = tprintf("%s/libtmpraylib.a", build_path);
-        nob_remove_file_if_exists(tmp_libraylib_path);
-    }
-
     cmd.count = 0;
-    if (needs_rebuild(config.libraylib_path, object_files.items, object_files.count)) {
-        cmd_append(&cmd, config.AR, "-crs", tmp_libraylib_path);
+    bool needed_rebuild = needs_rebuild(config.libraylib_path, object_files.items, object_files.count);
+    if (needed_rebuild) {
+        cmd_append(&cmd, config.AR, "-crs", config.libraylib_path);
         for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
             const char* module = raylib_modules[i];
-            bool skip_rglfw = PLATFORM_GLFW != config.platform && 0 == strcmp(module, "rglfw");
-            if (skip_rglfw) continue;
-
             const char *input_path = tprintf("%s/%s.o", build_path, module);
             cmd_append(&cmd, input_path);
         }
-        if (!cmd_run_sync(cmd)) return_defer(false);
+        if (!cmd_run_sync(cmd)) {
+            nob_log(INFO, "%s: faile to archive raylib.", __PRETTY_FUNCTION__);
+            return_defer(false);
+        } else {
+            nob_log(INFO, "%s: archived raylib successfully.", __PRETTY_FUNCTION__);
+        }
     } else {
-        nob_log(INFO, "%s: `%s` is up to date", __PRETTY_FUNCTION__, config.libraylib_path);
+        nob_log(INFO, "%s: `%s` archive is up to date", __PRETTY_FUNCTION__, config.libraylib_path);
     }
 
 
+
+    const char *libsdl3_path = "./src/vendor/SDL3/" SDL3_VERSION "/lib/libSDL3.a";
+    const char *libsdl3_patched_path = tprintf("%s/%s", build_path, "libSDL3.a");
+    config.libsdl3_patched_path = strdup(libsdl3_patched_path);
     // TODO: Add better caching for the achiving SDL3_STATIC
-    if (PLATFORM_SDL3 == config.platform && needs_rebuild(config.libraylib_path, object_files.items, object_files.count)) {
+    if (PLATFORM_SDL3 == config.platform && needed_rebuild) {
         //
         // We  need remove coliding symbols (with raylib) from static SDL3
         // Then concat both static lib, raylib and SDL3 into a single libraylib.a
         //
         {
             // Preserve the original SDL lib
-            const char *libsdl3_path = "./src/vendor/SDL3/" SDL3_VERSION "/lib/libSDL3.a";
-            const char *libsdl3_patched_path = tprintf("%s/%s", build_path, "libSDL3.a");
             copy_file(libsdl3_path, libsdl3_patched_path);
+            nob_log(INFO, "Redefining symbols in %s", libsdl3_patched_path);
             sdl_redefine_symbol_in_lib(libsdl3_patched_path);
-
-            const char *libs[] = {tmp_libraylib_path, libsdl3_patched_path, NULL};
-            concat_static_libs(config.libraylib_path, libs);
         }
 
         {   // if we're linking dynamically and we're on windows we need to do this
@@ -551,7 +559,7 @@ defer:
     return result;
 }
 
-#if 0
+#if 1
 bool build_with_libs(const char *sources[]) {
     bool should_build_clipboard = false;
     bool result = true;
@@ -559,7 +567,7 @@ bool build_with_libs(const char *sources[]) {
     Procs procs = {0};
     cmd.count = 0;
 
-    cmd_append(&cmd, CC);
+    cmd_append(&cmd, config.CC);
 
     #ifdef _WIN32
         if (should_build_clipboard && !build_clipboard()) return 1;
@@ -600,25 +608,30 @@ bool build_with_libs(const char *sources[]) {
         cmd_append(&cmd, "-O3");
     #endif
 
+        
     // "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include","-I/usr/include/sysprof-6","-lglib-2.0"
-    cmd_append(&cmd, "-I.", "-I./src/include/",  "-pthread");
+    cmd_append(&cmd, "-I.", "-I./src/include/",  "-I" MPV_INCLUDE_PATH);
+
+    const char* build_dir = gen_build_dir();
+    cmd_append(&cmd, "-L" MPV_LIBRARY_PATH);
+    cmd_append(&cmd, tprintf("-L./%s", build_dir));
+
 
     if (flags.libs.glib)   cmd_append(&cmd,  "-I/usr/include/glib-2.0", "-I/usr/lib/glib-2.0/include" ,"-I/usr/include/sysprof-6", "-pthread", "-lglib-2.0");
-    if (flags.libs.mpv)    cmd_append(&cmd, "-lmpv");
-    // if (flags.libs.raylib) cmd_append(&cmd, "-I" RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  "-l:./"RAYLIB_BUILD_DIR"/libraylib.a", "-lpthread", "-lm");
-    if (flags.libs.raylib) {
-        assert(libraylib_path != NULL);
-        cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  tprintf("-l:%s", libraylib_path), "-lpthread", "-lm");
+
+    #define MPVDLL "libmpv-2.dll"
+    if (flags.libs.mpv) {
+        cmd_append(&cmd, "-l:libmpv.dll.a");
+        copy_file(MPV_LIBRARY_PATH MPVDLL, tprintf("%s/%s", BUILD_DIR, MPVDLL));
     }
 
-    #ifdef PLATFORM_SDL3
-        cmd_append_sdl(&cmd);
-    #elif defined(PLATFORM_RGFW)
-        cmd_append(&cmd,
-               "-lgdi32",
-               "-lopengl32",
-        );
-    #endif
+
+    // if (flags.libs.raylib) cmd_append(&cmd, "-I" RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./",  "-l:./"RAYLIB_BUILD_DIR"/libraylib.a", "-lpthread", "-lm");
+    if (flags.libs.raylib) {
+        assert(config.libraylib_path != NULL);
+        // cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR, "-I./src/vendor/", tprintf("-l:./%s", config.libraylib_path), "-lpthread", "-lm");
+        cmd_append(&cmd, "-I"RAYLIB_SOURCE_DIR, "-I./src/vendor/", "-L./", "-l:libraylib.a", "-lm");
+    }
 
     if (flags.mingw32) {
         if (should_build_clipboard) {
@@ -628,6 +641,21 @@ bool build_with_libs(const char *sources[]) {
         cmd_append(&cmd, "-L/mingw64/bin/", "-L/mingw64/lib/", "-I/mingw64/include");
         cmd_append(&cmd, "-lwinmm", "-lgdi32", "-luuid");
         cmd_append(&cmd, "-lopengl32");
+        if (PLATFORM_SDL2 == config.platform || PLATFORM_SDL3 == config.platform) {
+            cmd_append(&cmd,
+               tprintf("-l:./%s", config.libsdl3_patched_path)
+            );
+            cmd_append(&cmd,
+               "-lgdi32", "-lole32", "-lcfgmgr32",
+               "-limm32", "-loleaut32", "-lversion", "-lsetupapi",
+               "-lwinmm", "-luuid",
+               "-pthread",
+               "-l:libpthread.a",
+               "-l:libwinpthread.a"
+// libwinpthread.a
+// uneeded_rebuild
+            );
+        }
         //
         // NOTE: It can't be static since we don't compile mpv into a lib.a
         // cmd_append(&cmd, "-static");
@@ -764,21 +792,63 @@ bool build_examples(void) {
     return true;
 }
 
+#define LIBMPV_DLL      MPV_LIBRARY_PATH MPVDLL
+#define LIBMPV_PART_AA  MPV_LIBRARY_PATH MPVDLL ".part_aa"
+#define LIBMPV_PART_AB  MPV_LIBRARY_PATH MPVDLL ".part_ab"
+
+bool reassemble_libmpv(void) {
+    if (file_exists(LIBMPV_DLL)) {
+        nob_log(INFO, "%s already assembled, skipping.", LIBMPV_DLL);
+        return true;
+    }
+
+    nob_log(INFO, "Assembling %s from parts...", LIBMPV_DLL);
+
+    const char *parts[] = { LIBMPV_PART_AA, LIBMPV_PART_AB };
+    FILE *out = fopen(LIBMPV_DLL, "wb");
+    if (!out) {
+        nob_log(ERROR, "Could not open %s for writing", LIBMPV_DLL);
+        return false;
+    }
+
+    for (int i = 0; i < ARRAY_LEN(parts); i++) {
+        FILE *in = fopen(parts[i], "rb");
+        if (!in) {
+            nob_log(ERROR, "Missing part: %s", parts[i]);
+            fclose(out);
+            return false;
+        }
+        char buf[65536];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+            fwrite(buf, 1, n, out);
+        fclose(in);
+        nob_log(INFO, "Merged part: %s", parts[i]);
+    }
+
+    fclose(out);
+    nob_log(INFO, "OK: %s assembled", LIBMPV_DLL);
+    return true;
+}
+
 
 int build() {
     nob_log(INFO, "Making directory for build `%s`", BUILD_DIR);
     if (!mkdir_if_not_exists(BUILD_DIR)) return false;
 
+    if (!reassemble_libmpv()) return 1;
+
     // Default, always check and build
     if (!build_raylib()) return 1;
 
+    flags.cyber_player = true;
     if (flags.cyber_player) {
-        TODO("flags.cyber_player");
 
         flags.libs.mpv = true;
         {
             const char *sources[] = {"./src/cyber-player.c", "./src/progress.c", NULL};
-            // if (!build_with_libs(sources)) return 1;
+            nob_log(INFO, "About to build with libs `%s`", BUILD_DIR);
+            if (!build_with_libs(sources)) return 1;
         }
         flags.libs.mpv = false;
     }
@@ -789,11 +859,10 @@ int build() {
 
     if (flags.run) {
         Cmd cmd = {0};
-        TODO("WAITING");
-
-#if (defined(__MINGW64__) || defined(__MINGW32__))
+#if 1 || (defined(__MINGW64__) || defined(__MINGW32__))
         const char *playfile =
-            "\\Users\\Administrator\\Downloads\\cat_falls_ass_on_camera.mp4";
+            // "\\Users\\Administrator\\Downloads\\cat_falls_ass_on_camera.mp4";
+            "Users\\Administrator\\Downloads\\m2-res_480p (72).mp4";
         cmd_append(&cmd, tprintf("%s.exe", BUILD_DIR "/" BIN));
 #else
         const char *playfile = "~/media/videos/life_is_everything.mp4";
@@ -865,7 +934,9 @@ int main(int argc, char **argv) {
         config.CC       = "x86_64-w64-mingw32-gcc";
         config.AR       = "x86_64-w64-mingw32-ar";
         config.OBJCOPY  = "x86_64-w64-mingw32-objcopy";
-        config.platform = PLATFORM_SDL3;
+        if (PLATFORM_UNSET == config.platform) {
+            config.platform = PLATFORM_RGFW;
+        }
     }
 
     int platform_count = 0;
@@ -917,3 +988,9 @@ int main(int argc, char **argv) {
 // mingw-w64-x86_64-cc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja  mingw-w64-x86_64-pkg-config mingw-w64-x86_64-tools-extra
 // pacman -S mingw-w64-x86_64-pkg-config
 
+// make -j4 TARGET_PLATFORM=PLATFORM_DESKTOP CFLAGS+=-fmax-errors=4 gcc -c rcore.c -fmax-errors=4 -I.
+
+// make -j4 CC=gcc TARGET_PLATFORM=PLATFORM_DESKTOP_SDL SDL_INCLUDE_PATH="/usr/include/SDL2/"
+// make -j4 TARGET_PLATFORM=PLATFORM_DESKTOP_SDL INCLUDE_PATHS+="-I/home/excyber/code/unamed-video/src/vendor/SDL3/SDL3-x86_64-w64-mingw32/include/SDL3" INCLUDE_PATHS+="-I/home/excyber/code/unamed-video/src/vendor/SDL3/SDL3-x86_64-w64-mingw32/include/"
+ // If you have install locally it'll finde <SDL3/SDL.h> that SDL3 does, other wise you might nedd this
+// make -j4 TARGET_PLATFORM=PLATFORM_DESKTOP_SDL INCLUDE_PATHS+="-I/usr/local/include/SDL3"

@@ -973,9 +973,7 @@ const char *GetClipboardText(void)
 Image GetClipboardImage(void)
 {
     Image image = {0};
-
     unsigned long long int dataSize = 0;
-
     void* fileData = NULL;
 
 #ifdef _WIN32
@@ -984,6 +982,7 @@ Image GetClipboardImage(void)
 #else
     TRACELOG(LOG_WARNING, "Clipboard image: PLATFORM_GLFW doesn't implement `GetClipboardImage` for this OS");
 #endif
+
     if (fileData == NULL)
     {
         TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data.");
@@ -994,7 +993,7 @@ Image GetClipboardImage(void)
     }
     return image;
 }
-#endif
+#endif // SUPPORT_CLIPBOARD_IMAGE
 
 
 // Show mouse cursor

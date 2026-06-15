@@ -102,10 +102,13 @@ debug: FLAGS += -ggdb
 debug: build
 	$(GDB) --args $(BIN) $(ARGS)
 
+cye:
+	cp ~/code/cye.h/cye.h .
+
 clean:
 	@echo "Cleaning up"
 	find . -type f \( -name "*.brdf" -o -name "*.o" -o -name "*.a" -o -name "*.aux" -o -name "*.svg" \) -delete
 
 
 
-.PHONY: run debug doc build clean svg test sync mingw-run mingw-ssh
+.PHONY: run debug doc build clean svg test sync mingw-run mingw-ssh cye

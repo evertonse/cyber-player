@@ -56,7 +56,7 @@
 
 #if defined(GRAPHICS_API_OPENGL_ES2)
     // It seems it does not need to be included to work
-    // #include "SDL_opengles2.h"
+    //#include "SDL_opengles2.h"
 #else
     #include "SDL_opengl.h"     // SDL OpenGL functionality (if required, instead of internal renderer)
 #endif
@@ -272,7 +272,7 @@ const char* SDL_GameControllerNameForIndex(int joystickIndex)
 {
     // NOTE: SDL3 uses the IDs itself (SDL_JoystickID) instead of SDL2 joystick_index
     const char* name = NULL;
-    int i, numJoysticks;
+    int numJoysticks = 0;
     SDL_JoystickID *joysticks = SDL_GetJoysticks(&numJoysticks);
     if (joysticks) {
         if (joystickIndex < numJoysticks) {
@@ -294,19 +294,20 @@ int SDL_GetNumVideoDisplays(void)
     return monitorCount;
 }
 
+
+// SLD3 Migration:
+//    To emulate SDL2 this function should return `SDL_DISABLE` or `SDL_ENABLE`
+//    representing the *processing state* of the event before this function makes any changes to it.
 Uint8 SDL_EventState(Uint32 type, int state) {
+
+    Uint8 stateBefore = SDL_EventEnabled(type);
     switch (state)
     {
-        case SDL_DISABLE:
-            SDL_SetEventEnabled(type, false);
-            break;
-        case SDL_ENABLE:
-            SDL_SetEventEnabled(type, true);
-            break;
-        default:
-            TRACELOG(LOG_WARNING, "Event sate: unknow type");
-            break;
+        case SDL_DISABLE: SDL_SetEventEnabled(type, false); break;
+        case SDL_ENABLE: SDL_SetEventEnabled(type, true); break;
+        default: TRACELOG(LOG_WARNING, "Event sate: unknow type");
     }
+    return stateBefore;
 }
 
 void SDL_GetCurrentDisplayMode_Adapter(SDL_DisplayID displayID, SDL_DisplayMode* mode)
@@ -335,8 +336,13 @@ SDL_Surface *SDL_CreateRGBSurface(Uint32 flags, int width, int height, int depth
 //     SDL_GetDisplayDPI() -
 //     not reliable across platforms, approximately replaced by multiplying
 //     SDL_GetWindowDisplayScale() times 160 on iPhone and Android, and 96 on other platforms.
+// returns 0 on success or a negative error code on failure
 int SDL_GetDisplayDPI(int displayIndex, float * ddpi, float * hdpi, float * vdpi) {
-    SDL_GetWindowDisplayScale(platform.window) * 96;
+    float dpi = SDL_GetWindowDisplayScale(platform.window) * 96.0;
+    if (ddpi != NULL) *ddpi = dpi;
+    if (hdpi != NULL) *hdpi = dpi;
+    if (vdpi != NULL) *vdpi = dpi;
+    return 0;
 }
 
 SDL_Surface *SDL_CreateRGBSurfaceWithFormat(Uint32 flags, int width, int height, int depth, Uint32 format)
@@ -356,7 +362,7 @@ SDL_Surface *SDL_CreateRGBSurfaceWithFormatFrom(void *pixels, int width, int hei
 
 int SDL_NumJoysticks(void)
 {
-    int i, numJoysticks;
+    int numJoysticks;
     SDL_JoystickID *joysticks = SDL_GetJoysticks(&numJoysticks);
     SDL_free(joysticks);
     return numJoysticks;
@@ -444,13 +450,13 @@ bool WindowShouldClose(void)
 void ToggleFullscreen(void)
 {
     const int monitor = SDL_GetWindowDisplayIndex(platform.window);
-    #ifdef PLATFORM_DESKTOP_SDL3
-        int monitorCount = 0;
-        SDL_GetDisplays(&monitorCount);
-    #else
-        const int monitorCount = SDL_GetNumVideoDisplays();
-    #endif
+    const int monitorCount = SDL_GetNumVideoDisplays();
+
+#ifdef PLATFORM_DESKTOP_SDL3 // SDL3 Migration: Monitor is an id instead of index now, returns 0 on failure
+    if ((monitor > 0) && (monitor <= monitorCount))
+#else
     if ((monitor >= 0) && (monitor < monitorCount))
+#endif
     {
         if ((CORE.Window.flags & FLAG_FULLSCREEN_MODE) > 0)
         {
@@ -472,15 +478,12 @@ void ToggleFullscreen(void)
 void ToggleBorderlessWindowed(void)
 {
     const int monitor = SDL_GetWindowDisplayIndex(platform.window);
-
-    #ifdef PLATFORM_DESKTOP_SDL3
-        int monitorCount = 0;
-        SDL_GetDisplays(&monitorCount);
-    #else
-        const int monitorCount = SDL_GetNumVideoDisplays();
-    #endif
-
+    const int monitorCount = SDL_GetNumVideoDisplays();
+#ifdef PLATFORM_DESKTOP_SDL3 // SDL3 Migration: Monitor is an id instead of index now, returns 0 on failure
+    if ((monitor > 0) && (monitor <= monitorCount))
+#else
     if ((monitor >= 0) && (monitor < monitorCount))
+#endif
     {
         if ((CORE.Window.flags & FLAG_BORDERLESS_WINDOWED_MODE) > 0)
         {
@@ -489,11 +492,7 @@ void ToggleBorderlessWindowed(void)
         }
         else
         {
-            #ifdef PLATFORM_DESKTOP_SDL3
-                SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN);
-            #else
-                SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            #endif
+            SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
             CORE.Window.flags |= FLAG_BORDERLESS_WINDOWED_MODE;
         }
     }
@@ -532,14 +531,12 @@ void SetWindowState(unsigned int flags)
     if (flags & FLAG_FULLSCREEN_MODE)
     {
         const int monitor = SDL_GetWindowDisplayIndex(platform.window);
-
-        #ifdef PLATFORM_DESKTOP_SDL3
-            int monitorCount = 0;
-            SDL_GetDisplays(&monitorCount);
-        #else
-            const int monitorCount = SDL_GetNumVideoDisplays();
-        #endif
+        const int monitorCount = SDL_GetNumVideoDisplays();
+    #ifdef PLATFORM_DESKTOP_SDL3 // SDL3 Migration: Monitor is an id instead of index now, returns 0 on failure
+        if ((monitor > 0) && (monitor <= monitorCount))
+    #else
         if ((monitor >= 0) && (monitor < monitorCount))
+    #endif
         {
             SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN);
             CORE.Window.fullscreen = true;
@@ -598,7 +595,11 @@ void SetWindowState(unsigned int flags)
     {
         const int monitor = SDL_GetWindowDisplayIndex(platform.window);
         const int monitorCount = SDL_GetNumVideoDisplays();
+    #ifdef PLATFORM_DESKTOP_SDL3 // SDL3 Migration: Monitor is an id instead of index now, returns 0 on failure
+        if ((monitor > 0) && (monitor <= monitorCount))
+    #else
         if ((monitor >= 0) && (monitor < monitorCount))
+    #endif
         {
             SDL_SetWindowFullscreen(platform.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
         }
@@ -691,8 +692,6 @@ void ClearWindowState(unsigned int flags)
     }
 }
 
-
-
 // Set icon for window
 void SetWindowIcon(Image image)
 {
@@ -772,10 +771,7 @@ void SetWindowIcon(Image image)
         default: return; // Compressed formats are not supported
     }
 
-    #ifdef PLATFORM_DESKTOP_SDL3
-    #else
-        iconSurface = SDL_CreateRGBSurfaceFrom( image.data, image.width, image.height, depth, pitch, rmask, gmask, bmask, amask );
-    #endif
+    iconSurface = SDL_CreateRGBSurfaceFrom( image.data, image.width, image.height, depth, pitch, rmask, gmask, bmask, amask );
 
     if (iconSurface)
     {
@@ -822,7 +818,7 @@ void SetWindowMonitor(int monitor)
         const int screenWidth = CORE.Window.screen.width;
         const int screenHeight = CORE.Window.screen.height;
         SDL_Rect usableBounds;
-    #ifdef PLATFORM_DESKTOP_SDL3
+    #ifdef PLATFORM_DESKTOP_SDL3 // Different style for success checking
         if (SDL_GetDisplayUsableBounds(monitor, &usableBounds))
     #else
         if (SDL_GetDisplayUsableBounds(monitor, &usableBounds) == 0)
@@ -912,16 +908,20 @@ void *GetWindowHandle(void)
 // Get number of monitors
 int GetMonitorCount(void)
 {
-    const int monitorCount = SDL_GetNumVideoDisplays();
+    int monitorCount = 0;
+
+    monitorCount = SDL_GetNumVideoDisplays();
+
     return monitorCount;
 }
 
 // Get number of monitors
 int GetCurrentMonitor(void)
 {
-    // int currentMonitor = 0;
+    int currentMonitor = 0;
 
-    const int currentMonitor = SDL_GetWindowDisplayIndex(platform.window);
+    // Be aware that this returns an ID in SDL3 and a Index in SDL2
+    currentMonitor = SDL_GetWindowDisplayIndex(platform.window);
 
     return currentMonitor;
 }
@@ -1109,20 +1109,39 @@ const char *GetClipboardText(void)
 // Get clipboard image
 Image GetClipboardImage(void)
 {
-    Image image = {0};
+    // Let's hope compiler put these arrays in static memory
+    const char *image_formats[] = {
+        "image/bmp",
+        "image/png",
+        "image/jpg",
+        "image/tiff",
+    };
+    const char *image_extensions[] = {
+        ".bmp",
+        ".png",
+        ".jpg",
+        ".tiff",
+    };
 
+
+    Image image = {0};
     size_t dataSize = 0;
-    // NOTE: This pointer should be free with SDL_free() at some point.
-    // TODO: In case of failure let's try to cycle in to other mime types (formats)
-    void* fileData = SDL_GetClipboardData("image/bmp", &dataSize); // returns NULL on failure;
-    if (fileData == NULL)
+    void  *fileData = NULL;
+    for (int i = 0; i < SDL_arraysize(image_formats); ++i)
     {
-        TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data. %s", SDL_GetError());
+        // NOTE: This pointer should be free with SDL_free() at some point.
+        fileData = SDL_GetClipboardData(image_formats[i], &dataSize);
+        if (fileData) {
+            image = LoadImageFromMemory(image_extensions[i], fileData, dataSize);
+            if (IsImageReady(image))
+            {
+                TRACELOG(LOG_INFO, "Clipboard image: Got image from clipboard as a `%s` successfully", image_extensions[i]);
+                return image;
+            }
+        }
     }
-    else
-    {
-        image = LoadImageFromMemory(".bmp", fileData, dataSize);
-    }
+
+    TRACELOG(LOG_WARNING, "Clipboard image: Couldn't get clipboard data. %s", SDL_GetError());
     return image;
 }
 #endif
@@ -1170,11 +1189,6 @@ void EnableCursor(void)
 void DisableCursor(void)
 {
     SDL_SetRelativeMouseMode(SDL_TRUE);
-
-#ifdef PLATFORM_DESKTOP_SDL3
-    // SDL_HideCursor(); // do we need to do anything here?
-#else
-#endif
 
     platform.cursorRelative = true;
     CORE.Input.Mouse.cursorHidden = true;
@@ -1761,7 +1775,6 @@ int InitPlatform(void)
 {
     // Initialize SDL internal global state, only required systems
     // NOTE: Not all systems need to be initialized, SDL_INIT_AUDIO is not required, managed by miniaudio
-
     int result = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER);
     if (result < 0) { TRACELOG(LOG_WARNING, "SDL: Failed to initialize SDL"); return -1; }
 
@@ -1845,11 +1858,11 @@ int InitPlatform(void)
     }
 
     // Init window
-    #ifdef PLATFORM_DESKTOP_SDL3
-        platform.window = SDL_CreateWindow(CORE.Window.title, CORE.Window.screen.width, CORE.Window.screen.height, flags);
-    #else
-        platform.window = SDL_CreateWindow(CORE.Window.title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, CORE.Window.screen.width, CORE.Window.screen.height, flags);
-    #endif
+#ifdef PLATFORM_DESKTOP_SDL3
+    platform.window = SDL_CreateWindow(CORE.Window.title, CORE.Window.screen.width, CORE.Window.screen.height, flags);
+#else
+    platform.window = SDL_CreateWindow(CORE.Window.title, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, CORE.Window.screen.width, CORE.Window.screen.height, flags);
+#endif
 
     // Init OpenGL context
     platform.glContext = SDL_GL_CreateContext(platform.window);
@@ -1963,3 +1976,4 @@ static KeyboardKey ConvertScancodeToKey(SDL_Scancode sdlScancode)
     return KEY_NULL; // No equivalent key in Raylib
 }
 // EOF
+
